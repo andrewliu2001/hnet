@@ -43,7 +43,9 @@ class FixedChunker(nn.Module):
 
     def down(self, h):
         B, L, D = h.shape
-        b = (torch.arange(L, device=h.device) % self.N == 0)[None].expand(B, L)
+        t = torch.arange(L, device=h.device, dtype=torch.float64)
+        # works for fractional strides too (e.g. N=3.4 to match H-Net's realised ratio)
+        b = (torch.floor(t / self.N) != torch.floor((t - 1) / self.N))[None].expand(B, L)
         z, mask = gather_chunks(h, b)
         return z, mask, dict(b=b)
 
@@ -144,9 +146,9 @@ class IFChunker(nn.Module):
     Upsampling: byte t uses the output of the most recent fired chunk.
     """
 
-    def __init__(self, d, N=4, lam=10.0, ste=False, cos=False, **kw):
+    def __init__(self, d, N=4, lam=10.0, ste=False, cos=False, last=False, **kw):
         super().__init__()
-        self.N, self.lam, self.ste, self.cos = N, lam, ste, cos
+        self.N, self.lam, self.ste, self.cos, self.last = N, lam, ste, cos, last
         if cos:
             # optional H-Net-style neighbour-dissimilarity feature for the router
             self.q = nn.Linear(d, d, bias=False)
@@ -190,6 +192,12 @@ class IFChunker(nn.Module):
         b = torch.zeros_like(nfire, dtype=torch.bool)
         b[:, 1:] = nfire[:, 1:] > nfire[:, :-1]
         b[:, 0] = True
+        if self.last:
+            # forward: the state of the byte where the chunk fires (selection, like H-Net);
+            # backward: gradient w.r.t. the router through the pooling weights.
+            zl, _ = gather_chunks(h, b)
+            zl = zl[:, :M]
+            z = zl + (z - z.detach())
         return z, mask, dict(a=a, nfire=nfire, b=b, frac=C - C.detach().floor())
 
     def up(self, y, st):
@@ -216,4 +224,5 @@ CHUNKERS = {
     "if": lambda d, N: IFChunker(d, N),
     "if_ste": lambda d, N: IFChunker(d, N, ste=True),
     "if_cos": lambda d, N: IFChunker(d, N, cos=True),
+    "if_last": lambda d, N: IFChunker(d, N, last=True),
 }
