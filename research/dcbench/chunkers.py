@@ -101,7 +101,7 @@ class HNetChunker(nn.Module):
             M = P.shape[1]
             tri = torch.ones(M, M, dtype=torch.bool, device=y.device).tril()
             W = torch.where(tri, W, torch.full_like(W, -float("inf"))).exp() * P[:, None, :]
-            y = torch.einsum("bkj,bjd->bkd", W, y)
+            y = torch.einsum("bkj,bjd->bkd", W.to(y.dtype), y)
         idx = b.long().cumsum(1) - 1
         u = y.gather(1, idx[..., None].expand(-1, -1, y.shape[-1]))
         if self.ste:
@@ -144,7 +144,7 @@ class IFChunker(nn.Module):
     Upsampling: byte t uses the output of the most recent fired chunk.
     """
 
-    def __init__(self, d, N=4, lam=1.0, ste=False, **kw):
+    def __init__(self, d, N=4, lam=10.0, ste=False, **kw):
         super().__init__()
         self.N, self.lam, self.ste = N, lam, ste
         self.w = nn.Linear(d, 1)
@@ -156,7 +156,7 @@ class IFChunker(nn.Module):
 
     def down(self, h):
         B, L, D = h.shape
-        a = torch.sigmoid(self.w(self.norm(h))[..., 0].float())
+        a = torch.sigmoid(self.w(self.norm(h))[..., 0])
         a = torch.cat([torch.ones_like(a[:, :1]), a[:, 1:]], 1)  # byte 0 forms chunk 0
         C = a.cumsum(1)
         Cp = C - a
