@@ -146,9 +146,10 @@ class IFChunker(nn.Module):
     Upsampling: byte t uses the output of the most recent fired chunk.
     """
 
-    def __init__(self, d, N=4, lam=10.0, ste=False, cos=False, last=False, **kw):
+    def __init__(self, d, N=4, lam=10.0, ste=False, cos=False, last=False, frozen=False, **kw):
         super().__init__()
         self.N, self.lam, self.ste, self.cos, self.last = N, lam, ste, cos, last
+        self.frozen = frozen  # ablation: constant a = 1/N (fixed stride) but keep pooling-gradient path
         if cos:
             # optional H-Net-style neighbour-dissimilarity feature for the router
             self.q = nn.Linear(d, d, bias=False)
@@ -174,6 +175,8 @@ class IFChunker(nn.Module):
             dis = F.pad((1 - cos) / 2, (1, 0), value=0.0)
             logit = logit + self.g * (dis - 0.5)
         a = torch.sigmoid(logit)
+        if self.frozen:
+            a = torch.full_like(a, 1.0 / self.N)
         a = torch.cat([torch.ones_like(a[:, :1]), a[:, 1:]], 1)  # byte 0 forms chunk 0
         C = a.cumsum(1)
         Cp = C - a
@@ -225,4 +228,5 @@ CHUNKERS = {
     "if_ste": lambda d, N: IFChunker(d, N, ste=True),
     "if_cos": lambda d, N: IFChunker(d, N, cos=True),
     "if_last": lambda d, N: IFChunker(d, N, last=True),
+    "if_last_frozen": lambda d, N: IFChunker(d, N, last=True, frozen=True),
 }
