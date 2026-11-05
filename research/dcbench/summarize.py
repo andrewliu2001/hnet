@@ -6,7 +6,7 @@ for f in sorted(glob.glob("results/*/*.json")):
     r = json.load(open(f))
     a, fin = r["args"], r["final"]
     split = "shifted (round1)" if "round1" in f else "interleaved"
-    rows[(split, a["chunker"])].append((a["seed"], fin))
+    rows[(split, a["chunker"] + a.get("tag", ""))].append((a["seed"], fin))
 
 print("| split | chunker | seeds | val bpb (each) | mean val bpb | compression L/M | word-boundary precision | wall time (s) |")
 print("|---|---|---|---|---|---|---|---|")
