@@ -144,9 +144,19 @@ class IFChunker(nn.Module):
     Upsampling: byte t uses the output of the most recent fired chunk.
     """
 
-    def __init__(self, d, N=4, lam=10.0, ste=False, **kw):
+    def __init__(self, d, N=4, lam=10.0, ste=False, cos=False, **kw):
         super().__init__()
-        self.N, self.lam, self.ste = N, lam, ste
+        self.N, self.lam, self.ste, self.cos = N, lam, ste, cos
+        if cos:
+            # optional H-Net-style neighbour-dissimilarity feature for the router
+            self.q = nn.Linear(d, d, bias=False)
+            self.k = nn.Linear(d, d, bias=False)
+            with torch.no_grad():
+                self.q.weight.copy_(torch.eye(d))
+                self.k.weight.copy_(torch.eye(d))
+            self.q.weight._no_reinit = True
+            self.k.weight._no_reinit = True
+            self.g = nn.Parameter(torch.tensor(4.0))
         self.w = nn.Linear(d, 1)
         self.w.weight._no_reinit = True
         with torch.no_grad():
@@ -156,7 +166,12 @@ class IFChunker(nn.Module):
 
     def down(self, h):
         B, L, D = h.shape
-        a = torch.sigmoid(self.w(self.norm(h))[..., 0])
+        logit = self.w(self.norm(h))[..., 0]
+        if self.cos:
+            cos = F.cosine_similarity(self.q(h[:, :-1]), self.k(h[:, 1:]), dim=-1)
+            dis = F.pad((1 - cos) / 2, (1, 0), value=0.0)
+            logit = logit + self.g * (dis - 0.5)
+        a = torch.sigmoid(logit)
         a = torch.cat([torch.ones_like(a[:, :1]), a[:, 1:]], 1)  # byte 0 forms chunk 0
         C = a.cumsum(1)
         Cp = C - a
@@ -200,4 +215,5 @@ CHUNKERS = {
     "hnet_noste": lambda d, N: HNetChunker(d, N, ste=False),
     "if": lambda d, N: IFChunker(d, N),
     "if_ste": lambda d, N: IFChunker(d, N, ste=True),
+    "if_cos": lambda d, N: IFChunker(d, N, cos=True),
 }

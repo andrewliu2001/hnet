@@ -26,8 +26,12 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 raw = np.frombuffer(open(args.data, "rb").read(), dtype=np.uint8)
-n_val = len(raw) // 20
-train, val = raw[:-n_val], raw[-n_val:]
+# interleaved split: every 20th 64KB block is held out (same distribution)
+blk = 1 << 16
+nb = len(raw) // blk
+is_val = (np.arange(nb) % 20) == 7
+blocks = raw[: nb * blk].reshape(nb, blk)
+train, val = blocks[~is_val].reshape(-1), blocks[is_val].reshape(-1)
 space = np.zeros(256, bool)
 for c in b" \n\t.,;:!?\"'()-":
     space[c] = True
@@ -46,12 +50,13 @@ def batch(arr, bs, rng):
 
 
 @torch.no_grad()
-def evaluate(n_batches=40):
+def evaluate(n_batches=40, arr=None):
+    arr = val if arr is None else arr
     model.eval()
     rng = np.random.default_rng(1234)
     tot, cnt, nb, nc, word = 0.0, 0, 0, 0, []
     for _ in range(n_batches):
-        x, y = batch(val, 16, rng)
+        x, y = batch(arr, 16, rng)
         logits, st = model(x)
         tot += F.cross_entropy(logits.reshape(-1, 256), y.reshape(-1), reduction="sum").item()
         cnt += y.numel()
@@ -89,6 +94,7 @@ for step in range(1, args.steps + 1):
               f"ratio {b.numel()/b.sum().item():.2f} {time.time()-t0:.0f}s", flush=True)
     if step % args.eval_every == 0 or step == args.steps:
         ev = evaluate()
+        ev["train_bpb"] = evaluate(10, train)["bpb"]
         ev.update(step=step, time=time.time() - t0)
         log.append(ev)
         print(f"{name} EVAL {ev}", flush=True)
