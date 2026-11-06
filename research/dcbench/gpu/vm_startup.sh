@@ -44,11 +44,12 @@ echo "training steps=$STEPS" > $R/STATUS; push "steps $STEPS"
 mkdir -p $WORK/logs
 PIDS=()
 RUNS_SPEC=${RUNS_SPEC:-"fixed:1 fixed:2 hnet:1 hnet:2 hnet:3 if_last:1 if_last:2 if_last:3"}
-RUNS=(); for r in $RUNS_SPEC; do RUNS+=("${r%%:*} ${r##*:}"); done
+RUNS=(); for r in $RUNS_SPEC; do RUNS+=("$(echo $r | tr ':' ' ')"); done   # arm seed [N]
 for i in "${!RUNS[@]}"; do
   set -- ${RUNS[$i]}
-  CUDA_VISIBLE_DEVICES=$i nohup timeout $((BUDGET_S * 2)) python3 train_gpu.py --chunker $1 --seed $2 $D \
-    --steps $STEPS --out $R > $WORK/logs/$1_s$2.log 2>&1 &
+  EXTRA=""; TAG=""; [ -n "$3" ] && EXTRA="--N $3 --tag _N$3" && TAG="_N$3"
+  CUDA_VISIBLE_DEVICES=$i nohup timeout $((BUDGET_S * 2)) python3 train_gpu.py --chunker $1 --seed $2 $D $EXTRA \
+    --steps $STEPS --out $R > $WORK/logs/$1${TAG}_s$2.log 2>&1 &
   PIDS+=($!)
 done
 ( while true; do sleep 900; push "progress"; done ) & PUSHER=$!

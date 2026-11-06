@@ -76,9 +76,13 @@ class HNetChunker(nn.Module):
     `ema=False` / `ste=False` turn individual pieces off (ablations).
     """
 
-    def __init__(self, d, N=4, ema=True, ste=True, surp=False, anticip=False, **kw):
+    def __init__(self, d, N=4, ema=True, ste=True, surp=False, anticip=False, fixed_b=False, **kw):
         super().__init__()
         self.N, self.ema, self.ste, self.anticip = N, ema, ste, anticip
+        # NEW (fixed_ema): static boundaries every N bytes, but keep H-Net's learned router p
+        # for the EMA de-chunking rate and the STE confidence gate (tests whether H-Net's gain
+        # comes from *where* it cuts or from its soft de-chunking)
+        self.fixed_b = fixed_b
         self.surp = surp or anticip
         self.thr = 0.5  # inference dial: boundary threshold
         if self.surp:
@@ -116,7 +120,11 @@ class HNetChunker(nn.Module):
             extra["head_ce"] = ce
         p = p.clamp(0, 1)
         p = F.pad(p, (1, 0), value=1.0)
-        b = p >= self.thr
+        if self.fixed_b:
+            t = torch.arange(p.shape[1], device=p.device)
+            b = (t % int(self.N) == 0)[None].expand_as(p)
+        else:
+            b = p >= self.thr
         z, mask = gather_chunks(h, b)
         P, _ = gather_chunks(p[..., None], b)
         return z, mask, dict(p=p, b=b, P=P[..., 0], **extra)
@@ -141,6 +149,8 @@ class HNetChunker(nn.Module):
 
     def aux_loss(self, st):
         p, b, N = st["p"], st["b"], self.N
+        if self.fixed_b:
+            return st["p"].new_zeros(())          # boundaries are fixed: no ratio loss
         F_ = b.float().mean()
         G = p.float().mean()
         loss = N / (N - 1) * ((N - 1) * F_ * G + (1 - F_) * (1 - G))
@@ -374,6 +384,7 @@ CHUNKERS = {
     "if_last": lambda d, N: IFChunker(d, N, last=True),
     "if_last_frozen": lambda d, N: IFChunker(d, N, last=True, frozen=True),
     "hnet_surp": lambda d, N: HNetChunker(d, N, surp=True),
+    "fixed_ema": lambda d, N: HNetChunker(d, N, fixed_b=True),
     "eqinfo": lambda d, N: EqInfoChunker(d, N),
     "anticip": lambda d, N: AnticipChunker(d, N),
     "hnet_anticip": lambda d, N: HNetChunker(d, N, anticip=True),
