@@ -1,0 +1,45 @@
+{
+ "args": {
+  "variant": "fixed",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 9000,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.0005,
+  "lr_mult": "2.0,1.0",
+  "warmup": 1000,
+  "N": 4,
+  "aux": 0.03,
+  "layout": "m4,T12,m4",
+  "d_model": "512,768",
+  "d_ff": "0,2048",
+  "seed": 3,
+  "eval_every": 2000,
+  "eval_batches": 100,
+  "out": "results/officialc",
+  "probe": 0
+ },
+ "params": 99765120,
+ "log": [
+  {
+   "bpb": 1.688603161553534,
+   "ratio": 4.0,
+   "step": 2000,
+   "time": 956.4534378051758
+  },
+  {
+   "bpb": 1.5549305748767306,
+   "ratio": 4.0,
+   "step": 4000,
+   "time": 1776.1795094013214
+  }
+ ],
+ "final": {
+  "bpb": 1.5549305748767306,
+  "ratio": 4.0,
+  "step": 4000,
+  "time": 1776.1795094013214
+ },
+ "done": false
+}
