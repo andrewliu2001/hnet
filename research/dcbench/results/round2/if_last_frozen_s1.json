@@ -1,0 +1,52 @@
+{
+ "args": {
+  "chunker": "if_last_frozen",
+  "data": "/tmp/claude-0/-home-user-hnet/ed2915e7-b80d-52da-9d9b-4ebb160b4dbd/scratchpad/data/big.txt",
+  "steps": 1500,
+  "bs": 16,
+  "L": 512,
+  "lr": 0.002,
+  "N": 4,
+  "aux": 0.03,
+  "seed": 1,
+  "threads": 1,
+  "eval_every": 500,
+  "out": "results/round2",
+  "tag": ""
+ },
+ "params": 12454593,
+ "log": [
+  {
+   "bpb": 2.399437601828652,
+   "ratio": 4.0,
+   "word_prec": 0.23439960629921258,
+   "train_bpb": 2.277782152396068,
+   "step": 500,
+   "time": 1582.540733575821
+  },
+  {
+   "bpb": 2.0883601296691676,
+   "ratio": 4.0,
+   "word_prec": 0.23439960629921258,
+   "train_bpb": 1.9475337741449064,
+   "step": 1000,
+   "time": 3171.2928183078766
+  },
+  {
+   "bpb": 1.9848809074687308,
+   "ratio": 4.0,
+   "word_prec": 0.23439960629921258,
+   "train_bpb": 1.8385065937072498,
+   "step": 1500,
+   "time": 4746.10417842865
+  }
+ ],
+ "final": {
+  "bpb": 1.9848809074687308,
+  "ratio": 4.0,
+  "word_prec": 0.23439960629921258,
+  "train_bpb": 1.8385065937072498,
+  "step": 1500,
+  "time": 4746.10417842865
+ }
+}
