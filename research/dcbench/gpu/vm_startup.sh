@@ -11,7 +11,8 @@ WORK=/ephemeral; [ -d $WORK ] || WORK=/root
 cd $WORK
 
 apt-get update -qq && apt-get install -y -qq git python3-pip >/dev/null
-pip install -q --break-system-packages torch numpy pyarrow || pip install -q torch numpy pyarrow
+pip install -q --break-system-packages torch --index-url https://download.pytorch.org/whl/cu128
+pip install -q --break-system-packages numpy pyarrow
 
 git clone -q -b "$BRANCH" "$REPO" hnet
 cd hnet/research/dcbench
