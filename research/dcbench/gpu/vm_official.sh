@@ -57,10 +57,10 @@ if [ -n "$SMOKE" ]; then
 fi
 
 echo "training steps=$STEPS" > $R/STATUS; push "steps $STEPS"
-PIDS=(); i=0
+PIDS=(); i=0; NGPU=$(nvidia-smi -L | wc -l)
 for r in $RUNS_SPEC; do
   v=${r%%:*}; s=${r##*:}
-  CUDA_VISIBLE_DEVICES=$i nohup python3 train_official.py --variant $v --seed $s $D --steps $STEPS --out $R \
+  CUDA_VISIBLE_DEVICES=$((i % NGPU)) nohup python3 train_official.py --variant $v --seed $s $D --steps $STEPS --out $R \
     > $WORK/logs/official_${v}_s$s.log 2>&1 &
   PIDS+=($!); i=$((i+1))
 done

@@ -11,3 +11,7 @@ results/gpu8/logs/vm.log
 results/gpu9/logs/vm.log
 results/gpu10/logs/vm.log
 results/official*/logs/vm.log
+results/officiala/logs/vm.log
+results/officialb/logs/vm.log
+results/officialc/logs/vm.log
+results/officiald/logs/vm.log
