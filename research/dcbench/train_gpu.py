@@ -22,6 +22,8 @@ p.add_argument("--L", type=int, default=2048)
 p.add_argument("--lr", type=float, default=1e-3)
 p.add_argument("--warmup", type=int, default=1000)
 p.add_argument("--lr_main_mult", type=float, default=0.3, help="lr multiplier for the main network")
+p.add_argument("--res_warmup", type=int, default=0, help="ramp the residual bypass 0->1 over this many steps")
+p.add_argument("--main_in_norm", type=int, default=0)
 p.add_argument("--window", type=int, default=128, help="sliding window of encoder/decoder attention (0 = full)")
 p.add_argument("--N", type=float, default=4)
 p.add_argument("--aux", type=float, default=0.03)
@@ -54,7 +56,7 @@ for c in b" \n\t.,;:!?\"'()-\x00":
 
 model = ByteHNet(args.chunker, d_outer=args.d_outer, d_inner=args.d_inner, n_enc=args.n_enc,
                  n_main=args.n_main, n_dec=args.n_dec, nh=args.nh, nh_inner=args.nh_inner,
-                 N=args.N, window=args.window or None).to(dev)
+                 N=args.N, window=args.window or None, main_in_norm=bool(args.main_in_norm)).to(dev)
 nparams = sum(p.numel() for p in model.parameters())
 groups = []
 for is_main in (False, True):
@@ -109,6 +111,7 @@ log, t0 = [], time.time()
 for step in range(1, args.steps + 1):
     for g in opt.param_groups:
         g["lr"] = lr_at(step) * g["mult"]
+    model.res_scale = min(1.0, step / args.res_warmup) if args.res_warmup else 1.0
     x, y = batch(train, args.bs, rng)
     with torch.autocast(dev, dtype=torch.bfloat16):
         logits, st = model(x)

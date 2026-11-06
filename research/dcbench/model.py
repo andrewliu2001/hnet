@@ -90,8 +90,12 @@ class ByteHNet(nn.Module):
     """1-stage H-Net style byte LM with a pluggable chunker."""
 
     def __init__(self, chunker="hnet", d_outer=192, d_inner=320, n_enc=2, n_main=6, n_dec=2,
-                 nh=4, N=4, window=128, nh_inner=None, res_drop=0.0):
+                 nh=4, N=4, window=128, nh_inner=None, res_drop=0.0, main_in_norm=False):
         super().__init__()
+        # NEW: residual warmup. The encoder->decoder bypass is scaled by res_scale (set by the
+        # training loop, ramping 0 -> 1), so early training must route information through the
+        # main network instead of letting the cheap bypass win and the main network collapse.
+        self.res_scale = 1.0
         # NEW: residual dropout. During training, drop the encoder->decoder bypass for a random
         # fraction of sequences so the decoder must learn to use the main network (prevents the
         # main-network collapse we observed for fixed-stride and other non-H-Net chunkers).
@@ -100,6 +104,7 @@ class ByteHNet(nn.Module):
         self.enc = Stack(d_outer, nh, n_enc, window)
         self.chunker = CHUNKERS[chunker](d_outer, N)
         self.up_dim = nn.Linear(d_outer, d_inner, bias=False)
+        self.main_in_norm = nn.LayerNorm(d_inner) if main_in_norm else nn.Identity()
         self.main = Stack(d_inner, nh_inner or nh, n_main)
         self.down_dim = nn.Linear(d_inner, d_outer, bias=False)
         self.residual_proj = nn.Linear(d_outer, d_outer)
@@ -120,12 +125,12 @@ class ByteHNet(nn.Module):
 
     def forward(self, x):
         h = self.enc(self.emb(x))
-        res = self.residual_proj(h)
+        res = self.residual_proj(h) * self.res_scale
         if self.training and self.res_drop > 0:
             keep = (torch.rand(x.shape[0], 1, 1, device=x.device) >= self.res_drop).to(res.dtype)
             res = res * keep
         z, zmask, st = self.chunker.down(h, x=x)
-        y = self.down_dim(self.main(self.up_dim(z), zmask))
+        y = self.down_dim(self.main(self.main_in_norm(self.up_dim(z)), zmask))
         u = self.chunker.up(y, st)
         out = self.dec(u + res)
         return self.head(out), st

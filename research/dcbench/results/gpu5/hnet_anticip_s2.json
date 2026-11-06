@@ -1,0 +1,61 @@
+{
+ "args": {
+  "chunker": "hnet_anticip",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 9000,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.001,
+  "warmup": 1000,
+  "lr_main_mult": 0.3,
+  "window": 128,
+  "N": 4,
+  "aux": 0.03,
+  "d_outer": 512,
+  "d_inner": 768,
+  "n_enc": 4,
+  "n_main": 12,
+  "n_dec": 4,
+  "nh": 8,
+  "nh_inner": 12,
+  "seed": 2,
+  "eval_every": 2000,
+  "eval_batches": 100,
+  "out": "results/gpu5",
+  "tag": "",
+  "probe": 0
+ },
+ "params": 148796929,
+ "log": [
+  {
+   "bpb": 1.6113067079673522,
+   "ratio": 3.6033341397435614,
+   "word_prec": 0.5965145740157307,
+   "at_space": 0.11051576373130054,
+   "step": 2000,
+   "time": 956.4884564876556,
+   "train_bpb": 1.6053619075024863
+  },
+  {
+   "bpb": 1.4689226084040288,
+   "ratio": 3.546742577579582,
+   "word_prec": 0.5845016209652062,
+   "at_space": 0.13392750653265242,
+   "step": 4000,
+   "time": 1710.200054883957,
+   "train_bpb": 1.4655770746122838
+  }
+ ],
+ "final": {
+  "bpb": 1.4689226084040288,
+  "ratio": 3.546742577579582,
+  "word_prec": 0.5845016209652062,
+  "at_space": 0.13392750653265242,
+  "step": 4000,
+  "time": 1710.200054883957,
+  "train_bpb": 1.4655770746122838
+ },
+ "sweep": [],
+ "done": false
+}
