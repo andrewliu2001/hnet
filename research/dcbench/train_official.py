@@ -21,7 +21,7 @@ from hnet.modules.dc import RoutingModuleOutput
 from hnet.utils.train import load_balancing_loss, group_params
 
 p = argparse.ArgumentParser()
-p.add_argument("--variant", default="hnet", choices=["hnet", "fixed"])
+p.add_argument("--variant", default="hnet", choices=["hnet", "fixed", "random", "hnet_anticip"])
 p.add_argument("--train", required=True)
 p.add_argument("--val", required=True)
 p.add_argument("--steps", type=int, default=9000)
@@ -36,7 +36,7 @@ p.add_argument("--layout", default="m4,T12,m4")
 p.add_argument("--d_model", default="512,768")
 p.add_argument("--d_ff", default="0,2048")
 p.add_argument("--seed", type=int, default=0)
-p.add_argument("--eval_every", type=int, default=2000)
+p.add_argument("--eval_every", type=int, default=1000)
 p.add_argument("--eval_batches", type=int, default=100)
 p.add_argument("--out", default="results/official")
 p.add_argument("--probe", type=int, default=0)
@@ -61,9 +61,61 @@ groups = group_params(model)
 for g in groups:
     g["mult"] = g.pop("lr_multiplier", 1.0)
     g.setdefault("weight_decay", 0.1)
-opt = torch.optim.AdamW(groups, lr=args.lr, betas=(0.9, 0.95), fused=True)
-nparams = sum(q.numel() for q in model.parameters())
 bb = model.backbone
+CUR = {}   # current flattened input ids (for the anticipatory probe)
+
+# ---- variant: H-Net router + anticipatory (next-byte entropy) feature ----------------------
+extra_params = []
+if args.variant == "hnet_anticip":
+    rm = bb.routing_module
+    d0 = dm[0]
+    probe = torch.nn.Sequential(torch.nn.LayerNorm(d0), torch.nn.Linear(d0, 256)).to(dev)
+    gamma = torch.nn.Parameter(torch.tensor(0.1, device=dev))
+    stats = {"mu": torch.tensor(3.0, device=dev), "sd": torch.tensor(2.0, device=dev)}
+    extra_params = list(probe.parameters()) + [gamma]
+
+    def anticip_routing(hidden_states, cu_seqlens=None, mask=None, inference_params=None):
+        h = hidden_states                                   # packed (T, D)
+        cos = (F.normalize(rm.q_proj_layer(h[:-1]), dim=-1) * F.normalize(rm.k_proj_layer(h[1:]), dim=-1)).sum(-1)
+        p = (1 - cos.float()) / 2                           # boundary prob for positions 1..T-1
+        logits = probe(h.detach().float())                  # predicts x_{t+1} from h_t
+        lp = logits.log_softmax(-1)
+        ent = (-(lp.exp() * lp).sum(-1) / math.log(2)).detach()   # (T,)
+        x = CUR["x"]
+        nll = F.cross_entropy(logits[:-1], x[1:], reduction="none")
+        valid = torch.ones_like(nll, dtype=torch.bool)
+        valid[cu_seqlens[1:-1] - 1] = False                 # do not predict across sequences
+        CUR["probe_ce"] = nll[valid].mean()
+        z = (ent[1:] - stats["mu"]) / (stats["sd"] + 1e-6)  # running stats: causal
+        if model.training:
+            with torch.no_grad():
+                stats["mu"].mul_(0.99).add_(0.01 * ent.mean()); stats["sd"].mul_(0.99).add_(0.01 * ent.std())
+        p = (p + gamma * z).clamp(0, 1)
+        p = F.pad(p, (1, 0), value=1.0)
+        p = p.clone(); p[cu_seqlens[:-1]] = 1.0
+        bp = torch.stack([1 - p, p], -1)
+        sel = bp.argmax(-1)
+        return RoutingModuleOutput(boundary_prob=bp, boundary_mask=sel == 1,
+                                   selected_probs=bp.gather(-1, sel[:, None]))
+    rm.forward = anticip_routing
+
+# ---- variant: random (content-independent) boundaries at rate 1/N -------------------------
+if args.variant == "random":
+    gen = torch.Generator(device=dev); gen.manual_seed(10_000 + args.seed)
+
+    def random_routing(hidden_states, cu_seqlens=None, mask=None, inference_params=None):
+        T = hidden_states.shape[0]
+        b = torch.rand(T, device=hidden_states.device, generator=gen) < 1.0 / args.N
+        b[cu_seqlens[:-1]] = True
+        pr = b.float()
+        return RoutingModuleOutput(boundary_prob=torch.stack([1 - pr, pr], -1), boundary_mask=b,
+                                   selected_probs=torch.ones(T, 1, device=hidden_states.device))
+    bb.routing_module.forward = random_routing
+
+if extra_params:
+    groups.append({"params": extra_params, "mult": 1.0, "weight_decay": 0.0})
+opt = torch.optim.AdamW(groups, lr=args.lr, betas=(0.9, 0.95), fused=True)
+nparams = sum(q.numel() for q in model.parameters()) + sum(q.numel() for q in extra_params)
 
 # ---- variant: fixed-stride routing in the official architecture ---------------------------
 if args.variant == "fixed":
@@ -115,6 +167,7 @@ def batch(arr, bs, rng):
 
 
 def run(x):
+    CUR["x"] = x.reshape(-1)
     with torch.autocast("cuda", dtype=torch.bfloat16):
         o = model(x)
     return o.logits.float(), o.bpred_output
@@ -145,7 +198,12 @@ for step in range(1, args.steps + 1):
     x, y = batch(train, args.bs, rng)
     logits, bp = run(x)
     ce = F.cross_entropy(logits.reshape(-1, 256), y.reshape(-1))
-    aux = sum(load_balancing_loss(o, N=args.N) for o in bp) if args.variant == "hnet" else torch.zeros((), device=dev)
+    if args.variant in ("hnet", "hnet_anticip"):
+        aux = sum(load_balancing_loss(o, N=args.N) for o in bp)
+    else:
+        aux = torch.zeros((), device=dev)
+    if args.variant == "hnet_anticip":
+        aux = aux + CUR["probe_ce"]
     loss = ce + args.aux * aux
     opt.zero_grad(set_to_none=True)
     loss.backward()
@@ -165,13 +223,13 @@ for step in range(1, args.steps + 1):
         last = step == args.steps
         ev = evaluate(val, args.eval_batches if last else args.eval_batches // 4)
         ev.update(step=step, time=time.time() - t0)
-        if last:
-            MEAN_REPLACE[0] = True
-            ev["bpb_main_meanreplaced"] = evaluate(val, args.eval_batches // 2)["bpb"]
-            MEAN_REPLACE[0] = False
-            ev["bpb_half"] = evaluate(val, args.eval_batches // 2)["bpb"]
-            ev["ctx_gain"] = ev["bpb_main_meanreplaced"] - ev["bpb_half"]
-            print(f"{name} CTX {ev['ctx_gain']:.4f} bpb", flush=True)
+        nb = args.eval_batches // 2 if last else args.eval_batches // 10
+        MEAN_REPLACE[0] = True
+        ev["bpb_main_meanreplaced"] = evaluate(val, nb)["bpb"]
+        MEAN_REPLACE[0] = False
+        ev["bpb_half"] = evaluate(val, nb)["bpb"]
+        ev["ctx_gain"] = ev["bpb_main_meanreplaced"] - ev["bpb_half"]
+        print(f"{name} CTX {ev['ctx_gain']:.4f} bpb", flush=True)
         log.append(ev)
         print(f"{name} EVAL {ev}", flush=True)
         with open(os.path.join(args.out, name + ".json"), "w") as f:
