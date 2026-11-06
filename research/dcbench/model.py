@@ -95,7 +95,7 @@ class ByteHNet(nn.Module):
     def forward(self, x):
         h = self.enc(self.emb(x))
         res = self.residual_proj(h)
-        z, zmask, st = self.chunker.down(h)
+        z, zmask, st = self.chunker.down(h, x=x)
         y = self.down_dim(self.main(self.up_dim(z), zmask))
         u = self.chunker.up(y, st)
         out = self.dec(u + res)

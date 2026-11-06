@@ -130,6 +130,19 @@ for step in range(1, args.steps + 1):
         ev.update(step=step, time=time.time() - t0, train_bpb=evaluate(train, 10)["bpb"])
         log.append(ev)
         print(f"{name} EVAL {ev}", flush=True)
+        sweep = []
+        if step == args.steps:
+            # inference-time compute dial: same weights, different compression
+            ch = model.chunker
+            if hasattr(ch, "thr"):
+                knobs = [("thr", v) for v in (0.3, 0.4, 0.5, 0.6, 0.7)]
+            else:
+                knobs = [("dial", v) for v in (0.67, 0.8, 1.0, 1.25, 1.5)]
+            for k, v in knobs:
+                old = getattr(ch, k); setattr(ch, k, v)
+                ev2 = evaluate(val, args.eval_batches // 2); ev2[k] = v
+                sweep.append(ev2); setattr(ch, k, old)
+                print(f"{name} SWEEP {ev2}", flush=True)
         with open(os.path.join(args.out, name + ".json"), "w") as f:
-            json.dump(dict(args=vars(args), params=nparams, log=log, final=log[-1],
+            json.dump(dict(args=vars(args), params=nparams, log=log, final=log[-1], sweep=sweep,
                            done=step == args.steps), f, indent=1)

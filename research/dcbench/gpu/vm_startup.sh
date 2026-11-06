@@ -1,6 +1,6 @@
 #!/bin/bash
 # Headless runner for an 8-GPU Hyperstack VM (passed as cloud-init user_data).
-# The launcher prepends:  TOPIC=...  BRANCH=...  BUDGET_S=...
+# The launcher prepends:  TOPIC=...  BRANCH=...  BUDGET_S=...  [STEPS=...]  [RUNS_SPEC="arm:seed ..."]
 # No credentials live on the VM: the repo is public, and results/logs are sent as a
 # tarball attachment to an unguessable ntfy.sh topic, polled by the launching session.
 exec > /var/log/dcbench.log 2>&1
@@ -32,16 +32,19 @@ python3 prepare_fineweb.py --shards 2 --out $WORK/data > $R/logs/prepare.log 2>&
 D="--train $WORK/data/train.bin --val $WORK/data/val.bin"
 
 # speed probe (IF hits its target ratio from the start; H-Net drifts, hence the margin)
-python3 train_gpu.py --chunker if_last $D --probe 120 > $R/logs/probe.log 2>&1
-SPS=$(grep PROBE $R/logs/probe.log | awk '{print $3}')
-if [ -z "$SPS" ]; then echo "probe failed" > $R/STATUS; push "probe FAILED"; exit 1; fi
-STEPS=$(python3 -c "print(int($BUDGET_S / ($SPS * 1.25) // 1000 * 1000))")
-echo "probe ${SPS}s/step -> steps $STEPS" >> $R/logs/prepare.log
-echo "training steps=$STEPS" > $R/STATUS; push "probe ${SPS}s/step, steps $STEPS"
+if [ -z "$STEPS" ]; then
+  python3 train_gpu.py --chunker if_last $D --probe 120 > $R/logs/probe.log 2>&1
+  SPS=$(grep PROBE $R/logs/probe.log | awk '{print $3}')
+  if [ -z "$SPS" ]; then echo "probe failed" > $R/STATUS; push "probe FAILED"; exit 1; fi
+  STEPS=$(python3 -c "print(int($BUDGET_S / ($SPS * 1.25) // 1000 * 1000))")
+  echo "probe ${SPS}s/step -> steps $STEPS" >> $R/logs/prepare.log
+fi
+echo "training steps=$STEPS" > $R/STATUS; push "steps $STEPS"
 
 mkdir -p $WORK/logs
 PIDS=()
-RUNS=("fixed 1" "fixed 2" "hnet 1" "hnet 2" "hnet 3" "if_last 1" "if_last 2" "if_last 3")
+RUNS_SPEC=${RUNS_SPEC:-"fixed:1 fixed:2 hnet:1 hnet:2 hnet:3 if_last:1 if_last:2 if_last:3"}
+RUNS=(); for r in $RUNS_SPEC; do RUNS+=("${r%%:*} ${r##*:}"); done
 for i in "${!RUNS[@]}"; do
   set -- ${RUNS[$i]}
   CUDA_VISIBLE_DEVICES=$i nohup timeout $((BUDGET_S * 2)) python3 train_gpu.py --chunker $1 --seed $2 $D \

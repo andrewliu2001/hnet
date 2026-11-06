@@ -41,11 +41,14 @@ class FixedChunker(nn.Module):
         super().__init__()
         self.N = N
 
-    def down(self, h):
+    dial = 1.0
+
+    def down(self, h, x=None):
         B, L, D = h.shape
         t = torch.arange(L, device=h.device, dtype=torch.float64)
         # works for fractional strides too (e.g. N=3.4 to match H-Net's realised ratio)
-        b = (torch.floor(t / self.N) != torch.floor((t - 1) / self.N))[None].expand(B, L)
+        N = self.N * self.dial  # inference dial: stretch the stride
+        b = (torch.floor(t / N) != torch.floor((t - 1) / N))[None].expand(B, L)
         z, mask = gather_chunks(h, b)
         return z, mask, dict(b=b)
 
@@ -73,9 +76,17 @@ class HNetChunker(nn.Module):
     `ema=False` / `ste=False` turn individual pieces off (ablations).
     """
 
-    def __init__(self, d, N=4, ema=True, ste=True, **kw):
+    def __init__(self, d, N=4, ema=True, ste=True, surp=False, **kw):
         super().__init__()
-        self.N, self.ema, self.ste = N, ema, ste
+        self.N, self.ema, self.ste, self.surp = N, ema, ste, surp
+        self.thr = 0.5  # inference dial: boundary threshold
+        if surp:
+            # NEW (hnet_surp): add standardized byte surprisal from a detached next-byte probe
+            self.head = SurprisalHead(d)
+            self.gamma = nn.Parameter(torch.tensor(0.1))
+            # running stats (not batch stats: those would leak future bytes)
+            self.register_buffer("s_mu", torch.tensor(3.0))
+            self.register_buffer("s_sd", torch.tensor(2.0))
         self.q = nn.Linear(d, d, bias=False)
         self.k = nn.Linear(d, d, bias=False)
         with torch.no_grad():
@@ -84,15 +95,26 @@ class HNetChunker(nn.Module):
         self.q.weight._no_reinit = True
         self.k.weight._no_reinit = True
 
-    def down(self, h):
+    def down(self, h, x=None):
         cos = F.cosine_similarity(self.q(h[:, :-1]), self.k(h[:, 1:]), dim=-1)
         cos = cos.to(torch.promote_types(cos.dtype, torch.float32))
-        p = ((1 - cos) / 2).clamp(0, 1)
+        p = (1 - cos) / 2
+        extra = {}
+        if self.surp:
+            s, ce = self.head(h, x)                       # (B, L-1) bits, head loss
+            zs = (s - self.s_mu) / (self.s_sd + 1e-6)
+            p = p + self.gamma * zs
+            if self.training:
+                with torch.no_grad():
+                    self.s_mu.mul_(0.99).add_(0.01 * s.mean())
+                    self.s_sd.mul_(0.99).add_(0.01 * s.std())
+            extra["head_ce"] = ce
+        p = p.clamp(0, 1)
         p = F.pad(p, (1, 0), value=1.0)
-        b = p >= 0.5
+        b = p >= self.thr
         z, mask = gather_chunks(h, b)
         P, _ = gather_chunks(p[..., None], b)
-        return z, mask, dict(p=p, b=b, P=P[..., 0])
+        return z, mask, dict(p=p, b=b, P=P[..., 0], **extra)
 
     def up(self, y, st):
         p, b, P = st["p"], st["b"], st["P"]
@@ -116,7 +138,10 @@ class HNetChunker(nn.Module):
         p, b, N = st["p"], st["b"], self.N
         F_ = b.float().mean()
         G = p.float().mean()
-        return N / (N - 1) * ((N - 1) * F_ * G + (1 - F_) * (1 - G))
+        loss = N / (N - 1) * ((N - 1) * F_ * G + (1 - F_) * (1 - G))
+        if "head_ce" in st:
+            loss = loss + st["head_ce"]
+        return loss
 
     def boundaries(self, st):
         return st["b"]
@@ -168,7 +193,9 @@ class IFChunker(nn.Module):
             self.w.bias.fill_(-math.log(N - 1))   # sigmoid(b) = 1/N at init
         self.norm = nn.LayerNorm(d)
 
-    def down(self, h):
+    dial = 1.0
+
+    def down(self, h, x=None):
         B, L, D = h.shape
         logit = self.w(self.norm(h))[..., 0]
         if self.cos:
@@ -178,7 +205,7 @@ class IFChunker(nn.Module):
         a = torch.sigmoid(logit.to(torch.promote_types(logit.dtype, torch.float32)))
         if self.frozen:
             a = torch.full_like(a, 1.0 / self.N)
-        a = torch.cat([torch.ones_like(a[:, :1]), a[:, 1:]], 1)  # byte 0 forms chunk 0
+        a = torch.cat([torch.ones_like(a[:, :1]), (a[:, 1:] / self.dial).clamp(max=1 - 1e-4)], 1)  # byte 0 = chunk 0
         C = a.cumsum(1)
         Cp = C - a
         k0 = Cp.detach().floor()
@@ -220,6 +247,76 @@ class IFChunker(nn.Module):
         return st["b"]
 
 
+# ---------------------------------------------------------------------------
+# 3. NEW: Equal-information chunking (EqInfo)
+# ---------------------------------------------------------------------------
+class SurprisalHead(nn.Module):
+    """Next-byte probe on *detached* encoder states: s_t = -log2 q(x_t | h_{t-1}).
+    Trained by its own NLL only, so it does not change the encoder's objective."""
+
+    def __init__(self, d):
+        super().__init__()
+        self.norm = nn.LayerNorm(d)
+        self.proj = nn.Linear(d, 256)
+
+    def forward(self, h, x):
+        logits = self.proj(self.norm(h[:, :-1].detach())).float()
+        nll = F.cross_entropy(logits.reshape(-1, 256), x[:, 1:].reshape(-1), reduction="none")
+        nll = nll.view(x.shape[0], -1)
+        return nll.detach() / math.log(2), nll.mean()
+
+
+class EqInfoChunker(nn.Module):
+    """
+    Equal-information chunking: a chunk is emitted every time the accumulated surprisal
+    of the bytes since the last chunk reaches a budget of B bits,
+
+        a_t = min(1, s_t / B),   C_t = sum_{s<=t} a_s,   fire when C crosses an integer,
+
+    where s_t = -log2 q(x_t | h_{t-1}) comes from a detached next-byte probe on the
+    encoder. Every main-network step therefore covers ~B bits of (locally unpredictable)
+    information: easy stretches are compressed hard, surprising bytes start new chunks.
+
+    * no learned router, no STE, no EMA de-chunking, no ratio loss;
+    * B tracks N * mean(s) (running average, like BatchNorm), so the compression ratio
+      is ~N by construction;
+    * inference compute dial: B -> dial * B changes the compression of a trained model
+      without retraining;
+    * causal: s_t uses h_{t-1} and x_t only; chunk vector = state of the firing byte.
+    """
+
+    def __init__(self, d, N=4, momentum=0.02, **kw):
+        super().__init__()
+        self.N, self.m = N, momentum
+        self.head = SurprisalHead(d)
+        self.register_buffer("budget", torch.tensor(float(N) * 8.0))  # untrained probe: ~8 bits/byte
+        self.dial = 1.0
+
+    def down(self, h, x=None):
+        s, ce = self.head(h, x)
+        a = (s / (self.budget * self.dial)).clamp(max=1 - 1e-4)   # uses the budget *before* this batch
+        if self.training:
+            with torch.no_grad():
+                self.budget.mul_(1 - self.m).add_(self.m * self.N * s.mean())
+        a = torch.cat([torch.ones_like(a[:, :1]), a], 1)        # byte 0 forms chunk 0
+        nfire = a.cumsum(1).floor().long()
+        b = torch.zeros_like(nfire, dtype=torch.bool)
+        b[:, 1:] = nfire[:, 1:] > nfire[:, :-1]
+        b[:, 0] = True
+        z, mask = gather_chunks(h, b)
+        return z, mask, dict(b=b, head_ce=ce)
+
+    def up(self, y, st):
+        idx = st["b"].long().cumsum(1) - 1
+        return y.gather(1, idx[..., None].expand(-1, -1, y.shape[-1]))
+
+    def aux_loss(self, st):
+        return st["head_ce"]
+
+    def boundaries(self, st):
+        return st["b"]
+
+
 CHUNKERS = {
     "fixed": lambda d, N: FixedChunker(d, N),
     "hnet": lambda d, N: HNetChunker(d, N),
@@ -230,4 +327,6 @@ CHUNKERS = {
     "if_cos": lambda d, N: IFChunker(d, N, cos=True),
     "if_last": lambda d, N: IFChunker(d, N, last=True),
     "if_last_frozen": lambda d, N: IFChunker(d, N, last=True, frozen=True),
+    "hnet_surp": lambda d, N: HNetChunker(d, N, surp=True),
+    "eqinfo": lambda d, N: EqInfoChunker(d, N),
 }
