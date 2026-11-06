@@ -15,9 +15,14 @@ $PIP --upgrade pip wheel setuptools
 $PIP torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 $PIP numpy pyarrow einops optree "triton==3.2.0"
 GH=https://github.com
-$PIP $GH/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
-$PIP $GH/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
-$PIP $GH/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
+ABI=$(python3 -c "import torch;print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
+echo "torch $(python3 -c 'import torch;print(torch.__version__)') cxx11abi=$ABI"
+# --no-deps so these wheels cannot replace the pinned torch
+$PIP --no-deps $GH/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
+$PIP --no-deps $GH/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
+$PIP --no-deps $GH/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
+$PIP transformers==4.46.3 packaging ninja   # mamba_ssm / flash_attn runtime imports
+python3 -c "import torch;print('torch after wheels', torch.__version__)"
 
 git clone -q -b "$BRANCH" https://github.com/andrewliu2001/hnet.git hnet
 cd hnet/research/dcbench
