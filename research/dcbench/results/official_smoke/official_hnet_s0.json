@@ -1,0 +1,45 @@
+{
+ "args": {
+  "variant": "hnet",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 400,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.0005,
+  "lr_mult": "2.0,1.0",
+  "warmup": 100,
+  "N": 4,
+  "aux": 0.03,
+  "layout": "m4,T12,m4",
+  "d_model": "512,768",
+  "d_ff": "0,2048",
+  "seed": 0,
+  "eval_every": 400,
+  "eval_batches": 20,
+  "out": "results/official_smoke",
+  "probe": 0
+ },
+ "params": 99765120,
+ "log": [
+  {
+   "bpb": 1.89486482684357,
+   "ratio": 4.069194183317396,
+   "step": 400,
+   "time": 100.94555902481079,
+   "bpb_main_meanreplaced": 1.9096426081016076,
+   "bpb_half": 1.901022562468122,
+   "ctx_gain": 0.008620045633485507
+  }
+ ],
+ "final": {
+  "bpb": 1.89486482684357,
+  "ratio": 4.069194183317396,
+  "step": 400,
+  "time": 100.94555902481079,
+  "bpb_main_meanreplaced": 1.9096426081016076,
+  "bpb_half": 1.901022562468122,
+  "ctx_gain": 0.008620045633485507
+ },
+ "done": true
+}
