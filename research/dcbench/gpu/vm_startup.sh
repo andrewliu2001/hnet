@@ -16,7 +16,7 @@ pip install -q --break-system-packages numpy pyarrow
 
 git clone -q -b "$BRANCH" "$REPO" hnet
 cd hnet/research/dcbench
-R=results/gpu; mkdir -p $R/logs
+R=${RESULTS_DIR:-results/gpu}; mkdir -p $R/logs
 
 push() {  # send current results + log tails as one ntfy attachment
   cp /var/log/dcbench.log $R/logs/vm.log 2>/dev/null
