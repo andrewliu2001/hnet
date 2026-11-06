@@ -1,20 +1,119 @@
 # dcbench — can we beat (or simplify) H-Net's dynamic chunking?
 
-A small, pure-PyTorch (CPU-runnable, no `mamba_ssm`) testbed for comparing
-dynamic-chunking (DC) mechanisms inside a 1-stage H-Net-style byte LM, plus a new
-mechanism, **Integrate-and-Fire chunking (IF-DC)**.
+A pure-PyTorch testbed (no `mamba_ssm`) for comparing dynamic-chunking (DC) mechanisms
+inside a 1-stage H-Net-style byte LM, with several new mechanisms. Part 2 (GPU, 8×H100,
+FineWeb-Edu) supersedes Part 1 (CPU, 6.5 MB of text).
 
-> **TL;DR (honest).** At this (tiny) scale, IF-DC with selection-forward /
-> pooling-backward (`if_last`) has the best mean bits-per-byte of everything
-> tried, it hits its compression target exactly without any H-Net machinery
-> (no cosine router, no STE, no EMA de-chunking, no ratio loss), and it trains
-> ~12% faster in wall-clock than H-Net DC. **But** all differences among
-> `if_last`, H-Net DC and a fixed-stride baseline are ≈0.01 bpb, which is the
-> same size as seed-to-seed noise; none is statistically significant with the
-> seeds we could afford. Nothing here should be read as "beats H-Net" until
-> repeated at a scale where H-Net's DC clearly beats fixed-stride (it does not
-> here). The useful outcomes are (1) a much simpler DC mechanism that is at
-> least on par, (2) a set of negative/ablation results, and (3) the benchmark.
+> **TL;DR.**
+> 1. **Main-network collapse decides everything here.** In H-Net-style byte LMs the deep
+>    main network can collapse to a near-constant output while the cheap encoder → decoder
+>    residual path does all the work. We measure this directly with `ctx_gain` (bpb lost when
+>    the main network's output is replaced by its mean over chunks). Across the 32 valid GPU runs, final
+>    bpb is almost entirely determined by whether the main network stayed alive. Fixed-stride
+>    chunking (and every static / non-learned-router variant we tried) collapsed in **every**
+>    run (`ctx_gain` < 0.02); H-Net's learned router kept the main network alive in **6/8**
+>    seeds — which, in this setup, *is* H-Net's advantage over fixed-stride (~0.04–0.06 bpb).
+> 2. **New mechanism: anticipatory routing (`hnet_anticip`).** Add to H-Net's router a
+>    feature that anticipates difficulty: the (standardised) predictive entropy of the
+>    *next* byte from a detached next-byte probe on the encoder, so the main network is
+>    called right before hard-to-predict bytes. Over 6 seeds it never collapsed
+>    (min `ctx_gain` 0.13) and gave **mean 1.312 bpb, sd 0.006, worst 1.321**, vs H-Net
+>    **1.329, sd 0.029, worst 1.391** over 8 seeds (2/8 H-Net seeds partially collapsed).
+>    When H-Net does not collapse the two are equal (1.314 vs 1.312), so the gain is in
+>    **reliability**, not peak quality. Statistically this is **suggestive, not established**:
+>    Welch p=0.16 for the mean, Fisher p=0.47 for collapse incidence (0/6 vs 2/8), F-test
+>    p=0.002 for variance but robust Levene p=0.24. ~20 seeds per arm would settle it.
+> 3. **Negative results** (each with ≥2 seeds): integrate-and-fire chunking, equal-information
+>    (accumulated surprisal) chunking, pure anticipatory chunking without a learned router,
+>    H-Net with *realised* surprisal, static boundaries + H-Net's EMA/STE de-chunking, and
+>    three anti-collapse tricks (residual warmup, main-input LayerNorm, lower main lr) — none
+>    beats H-Net; the anti-collapse tricks give fixed-stride ~0.02 bpb but do not revive its
+>    main network.
+> 4. **Caveat on validity.** The first three GPU waves were run with a configuration in
+>    which the hierarchy was bypassed (full-attention encoder/decoder + too-high main lr);
+>    they are kept in `results/gpu{,2,3}` for the record but excluded from all conclusions.
+
+## Part 2 — GPU study (FineWeb-Edu bytes, 8×H100)
+
+### Setup
+
+* Data: FineWeb-Edu `sample-10BT` shards 0–1 as raw UTF-8 bytes (6.9 GB train, last 1 % of
+  documents = 71 MB val), `prepare_fineweb.py`.
+* Model (`train_gpu.py`): byte embedding → encoder (4 Transformer layers, d=512,
+  **128-byte sliding window**) → chunker → main network (12 layers, d=768, full causal) →
+  de-chunk → + residual → decoder (4 layers, d=512, 128-byte window) → head. ≈150M params.
+* 9000 steps × 32 × 2048 bytes ≈ 590M bytes per run, AdamW lr 1e-3 (cosine, 1k warmup),
+  **main-network lr ×0.3** (cf. H-Net's per-stage lr multipliers), bf16, one run per GPU.
+  Target compression N=4 for every arm.
+* Metrics: val bpb (100 × 32 × 2048 bytes), realised compression, fraction of chunk
+  boundaries on space/punctuation bytes, **`ctx_gain`**, and an inference-time "dial" sweep
+  (same weights, different compression).
+* Runs were launched headless on Hyperstack (`gpu/vm_startup.sh`): the VM holds no
+  credentials, clones this public repo, and returns results as a tarball via an unguessable
+  ntfy.sh topic polled by `gpu/poll_ntfy.sh`.
+
+### Results (valid runs, waves 4–7; `python gpu_summary.py`)
+
+| arm | seeds | val bpb (per seed) | mean | ctx_gain (per seed) | main alive | compression | boundaries on space/punct | wall s |
+|---|---|---|---|---|---|---|---|---|
+| `hnet_anticip` | 1,2,5,6,7,8 | 1.321, 1.303, 1.313, 1.308, 1.311, 1.317 | **1.312** | 0.245, 0.199, 0.195, 0.188, 0.131, 0.130 | 6/6 | 3.52 | 0.14 | 3702 |
+| `hnet` | 1,2,3,4,5,6,7,8 | 1.316, 1.312, 1.304, 1.391, 1.326, 1.310, 1.317, 1.352 | **1.329** | 0.194, 0.127, 0.198, 0.033, 0.118, 0.210, 0.246, 0.050 | 6/8 | 3.61 | 0.21 | 3637 |
+| `fixed_main_in_norm1` | 1,2 | 1.355, 1.344 | **1.349** | 0.005, 0.007 | 0/2 | 4.00 | 0.19 | 2864 |
+| `fixed_res_warmup3000` | 1,2 | 1.354, 1.347 | **1.350** | 0.018, 0.013 | 0/2 | 4.00 | 0.19 | 2876 |
+| `fixed_ema` | 1,2,3 | 1.362, 1.364, 1.364 | **1.363** | 0.002, 0.002, 0.001 | 0/3 | 4.00 | 0.19 | 2942 |
+| `fixed_N3.6` | 1,2 | 1.378, 1.355 | **1.366** | 0.003, 0.004 | 0/2 | 3.60 | 0.19 | 3041 |
+| `fixed` | 1,2 | 1.381, 1.357 | **1.369** | 0.002, 0.003 | 0/2 | 4.00 | 0.19 | 2873 |
+| `fixed_lr_main_mult0.1` | 1,2 | 1.382, 1.357 | **1.370** | 0.002, 0.003 | 0/2 | 4.00 | 0.19 | 2841 |
+| `anticip_res_warmup3000` | 1 | 1.373 | **1.373** | 0.009 | 0/1 | 4.01 | 0.66 | 3744 |
+| `anticip` | 1,2,3 | 1.382, 1.383, 1.362 | **1.376** | 0.007, 0.008, 0.014 | 0/3 | 3.99 | 0.66 | 3633 |
+| `hnet_res_warmup3000` | 4 | 1.405 | **1.405** | 0.083 | 1/1 | 3.93 | 0.23 | 3528 |
+
+* `hnet` mean over alive seeds only: 1.314 (6/8)
+
+"Main alive" = `ctx_gain` > 0.05 (an arbitrary threshold; e.g. `hnet_res_warmup3000` seed 4
+has 0.083 but still scores poorly). Same seed ⇒ same data order across arms.
+
+### New mechanisms in Part 2 (`chunkers.py`)
+
+| name | boundary rule | router gradient | notes |
+|---|---|---|---|
+| `eqinfo` | fire when accumulated surprisal `Σ s_t` of a detached next-byte probe reaches a running budget ≈ N·mean(s) | none | exact compression without a ratio loss; inference dial = budget scale (Part 2 wave 2, invalid config, ≈ fixed) |
+| `anticip` | boundary at t when the probe's predictive entropy of x_{t+1} exceeds a rate-controlled threshold | none | 66 % of boundaries on space/punct; collapsed like fixed |
+| `hnet_surp` | H-Net + γ·(standardised *realised* surprisal of x_t) | STE + EMA | ≈ H-Net (invalid config) |
+| **`hnet_anticip`** | **H-Net + γ·(standardised predictive entropy of x_{t+1})** | STE + EMA | **never collapsed in 6 seeds** |
+| `fixed_ema` | every N bytes, but H-Net's EMA de-chunking + STE gate with its learned p | STE + EMA | ≈ fixed: H-Net's gain is not its de-chunker |
+
+All pass `test_causal.py` (an early version of `hnet_surp` standardised surprisal with batch
+statistics, which leaks future bytes; the test caught it and running statistics are used).
+
+### Interpretation
+
+* Static or non-learned boundaries (`fixed`, `fixed_N3.6`, `fixed_ema`, `anticip`) all end
+  at ≈1.36–1.38 with a dead main network: the 128-byte-window encoder/decoder alone is a
+  ≈1.37-bpb byte LM, and the main network adds nothing.
+* H-Net's learned, content-dependent router is what keeps the main network in use. Its
+  boundaries sit mostly at word *starts* (only 13–24 % on space/punct), not at word ends.
+* `hnet_anticip` keeps H-Net's router and adds a next-byte-difficulty feature; this appears
+  to make the "main network gets used" outcome reliable. Why it helps is not established —
+  one hypothesis is that the extra feature gives the router a useful signal from step 0
+  (the probe is trained by its own NLL), before the cosine feature has become informative.
+* Practical recommendation regardless of method: **always report `ctx_gain`** (or an
+  equivalent hierarchy-bypass check) for hierarchical byte LMs; a bypassed hierarchy looks
+  like a normal, reasonably good LM in bpb alone.
+
+### What would make this conclusive
+
+* ~20 seeds per arm for `hnet` vs `hnet_anticip` (one 8-GPU wave ≈ 1 h ≈ $20 per 8 runs).
+* The official H-Net implementation (Mamba-2 encoder/decoder, lr multipliers) to check that
+  main-network collapse is not an artefact of this re-implementation.
+* Longer training and 2-stage hierarchies.
+
+## Part 1 — CPU study (superseded)
+
+The CPU study (12.5M params, Norvig's `big.txt`, 1500 steps) below introduced
+Integrate-and-Fire chunking. Its conclusion — all mechanisms within noise of fixed-stride —
+is plausibly explained by Part 2: CPU diagnostics (not run on those exact models) showed the
+main network barely used at that scale and learning rate.
 
 ## Mechanisms compared (`chunkers.py`)
 
