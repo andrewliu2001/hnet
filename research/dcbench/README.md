@@ -108,8 +108,9 @@ This one-seed "IF beats H-Net by 0.09" did **not** replicate on the clean split
    * Averaging chunk members (`if`) is worse than selecting the firing byte
      (`if_last`): ≈ +0.05 bpb.
    * The pooling-gradient trick with *frozen* uniform boundaries
-     (`if_last_frozen`) is worse than plain fixed-stride, so `if_last`'s edge is
-     due to learned boundaries, not the surrogate gradient as such.
+     (`if_last_frozen`) is on par with plain fixed-stride (seed-paired), so
+     whatever edge `if_last` has comes from its learned boundaries, not from the
+     surrogate gradient as such.
    * Removing H-Net's EMA de-chunking (`hnet_noema`) costs ≈0.02 bpb (2 seeds)
      and destroys most of the word alignment (0.15–0.28) — the EMA does matter
      for H-Net's router to learn, consistent with the H-Net paper.
