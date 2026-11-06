@@ -80,7 +80,7 @@ def batch(arr, bs, rng):
 def evaluate(arr, n_batches):
     model.eval()
     rng = np.random.default_rng(1234)
-    tot, cnt, nb, hits, starts = 0.0, 0, 0, 0, 0
+    tot, cnt, nb, hits, starts, at_sp = 0.0, 0, 0, 0, 0, 0
     for _ in range(n_batches):
         x, y = batch(arr, args.bs, rng)
         with torch.autocast(dev, dtype=torch.bfloat16):
@@ -92,8 +92,10 @@ def evaluate(arr, n_batches):
         prev = space[x[:, :-1]]
         hits += (prev & b[:, 1:]).sum().item()
         starts += b[:, 1:].sum().item()
+        at_sp += (space[x[:, 1:]] & b[:, 1:]).sum().item()
     model.train()
-    return dict(bpb=tot / cnt / math.log(2), ratio=cnt / nb, word_prec=hits / max(1, starts))
+    return dict(bpb=tot / cnt / math.log(2), ratio=cnt / nb, word_prec=hits / max(1, starts),
+                at_space=at_sp / max(1, starts))
 
 
 rng = np.random.default_rng(args.seed)

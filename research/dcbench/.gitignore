@@ -2,3 +2,4 @@ logs/
 __pycache__/
 results/gpu/logs/vm.log
 results/gpu2/logs/vm.log
+results/gpu3/logs/vm.log

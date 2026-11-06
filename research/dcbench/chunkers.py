@@ -76,11 +76,12 @@ class HNetChunker(nn.Module):
     `ema=False` / `ste=False` turn individual pieces off (ablations).
     """
 
-    def __init__(self, d, N=4, ema=True, ste=True, surp=False, **kw):
+    def __init__(self, d, N=4, ema=True, ste=True, surp=False, anticip=False, **kw):
         super().__init__()
-        self.N, self.ema, self.ste, self.surp = N, ema, ste, surp
+        self.N, self.ema, self.ste, self.anticip = N, ema, ste, anticip
+        self.surp = surp or anticip
         self.thr = 0.5  # inference dial: boundary threshold
-        if surp:
+        if self.surp:
             # NEW (hnet_surp): add standardized byte surprisal from a detached next-byte probe
             self.head = SurprisalHead(d)
             self.gamma = nn.Parameter(torch.tensor(0.1))
@@ -101,7 +102,11 @@ class HNetChunker(nn.Module):
         p = (1 - cos) / 2
         extra = {}
         if self.surp:
-            s, ce = self.head(h, x)                       # (B, L-1) bits, head loss
+            if self.anticip:
+                s, ce = self.head(h, x, entropy=True)     # (B, L): entropy of x_{t+1} given h_t
+                s = s[:, 1:]                              # aligned with p (positions 1..L-1)
+            else:
+                s, ce = self.head(h, x)                   # (B, L-1): surprisal of x_t
             zs = (s - self.s_mu) / (self.s_sd + 1e-6)
             p = p + self.gamma * zs
             if self.training:
@@ -259,10 +264,16 @@ class SurprisalHead(nn.Module):
         self.norm = nn.LayerNorm(d)
         self.proj = nn.Linear(d, 256)
 
-    def forward(self, h, x):
-        logits = self.proj(self.norm(h[:, :-1].detach())).float()
+    def forward(self, h, x, entropy=False):
+        logits_all = self.proj(self.norm(h.detach())).float()       # predicts x_{t+1} from h_t
+        logits = logits_all[:, :-1]
         nll = F.cross_entropy(logits.reshape(-1, 256), x[:, 1:].reshape(-1), reduction="none")
         nll = nll.view(x.shape[0], -1)
+        if entropy:
+            # predictive entropy of the NEXT byte, H_t = H(q(. | h_t)), for every t (bits)
+            lp = logits_all.log_softmax(-1)
+            ent = -(lp.exp() * lp).sum(-1).detach() / math.log(2)
+            return ent, nll.mean()
         return nll.detach() / math.log(2), nll.mean()
 
 
@@ -317,6 +328,41 @@ class EqInfoChunker(nn.Module):
         return st["b"]
 
 
+class AnticipChunker(nn.Module):
+    """
+    Anticipatory chunking: end a chunk at byte t (i.e. call the main network on h_t) when
+    the next byte is hard to predict locally, H_t = H(q(x_{t+1} | h_t)) > tau.
+
+    The main network's output at a boundary t is what the decoder uses to predict x_{t+1},
+    so this invokes the expensive model *right before* the uncertain byte (e.g. at the
+    space before a new word) instead of right after it (surprisal / cosine-change routers).
+    tau is a running controller that keeps the boundary rate at 1/N (used before update,
+    so it is causal). No learned router, STE, EMA de-chunking or ratio loss.
+    Inference dial: tau -> tau + log2(dial) bits.
+    """
+
+    def __init__(self, d, N=4, lr=0.2, **kw):
+        super().__init__()
+        self.N, self.lr = N, lr
+        self.head = SurprisalHead(d)
+        self.register_buffer("tau", torch.tensor(4.0))
+        self.dial = 1.0
+
+    def down(self, h, x=None):
+        ent, ce = self.head(h, x, entropy=True)
+        b = ent > (self.tau + math.log2(self.dial))
+        b[:, 0] = True
+        if self.training:
+            with torch.no_grad():
+                self.tau.add_(self.lr * (b[:, 1:].float().mean() - 1.0 / self.N) * self.N)
+        z, mask = gather_chunks(h, b)
+        return z, mask, dict(b=b, head_ce=ce)
+
+    up = EqInfoChunker.up
+    aux_loss = EqInfoChunker.aux_loss
+    boundaries = EqInfoChunker.boundaries
+
+
 CHUNKERS = {
     "fixed": lambda d, N: FixedChunker(d, N),
     "hnet": lambda d, N: HNetChunker(d, N),
@@ -329,4 +375,6 @@ CHUNKERS = {
     "if_last_frozen": lambda d, N: IFChunker(d, N, last=True, frozen=True),
     "hnet_surp": lambda d, N: HNetChunker(d, N, surp=True),
     "eqinfo": lambda d, N: EqInfoChunker(d, N),
+    "anticip": lambda d, N: AnticipChunker(d, N),
+    "hnet_anticip": lambda d, N: HNetChunker(d, N, anticip=True),
 }
