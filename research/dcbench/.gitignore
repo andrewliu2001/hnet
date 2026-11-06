@@ -10,3 +10,4 @@ results/gpu7/logs/vm.log
 results/gpu8/logs/vm.log
 results/gpu9/logs/vm.log
 results/gpu10/logs/vm.log
+results/official*/logs/vm.log
