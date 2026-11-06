@@ -1,0 +1,63 @@
+{
+ "args": {
+  "chunker": "hnet",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 9000,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.001,
+  "warmup": 1000,
+  "lr_main_mult": 0.3,
+  "res_warmup": 0,
+  "main_in_norm": 0,
+  "window": 128,
+  "N": 4,
+  "aux": 0.03,
+  "d_outer": 512,
+  "d_inner": 768,
+  "n_enc": 4,
+  "n_main": 12,
+  "n_dec": 4,
+  "nh": 8,
+  "nh_inner": 12,
+  "seed": 18,
+  "eval_every": 2000,
+  "eval_batches": 100,
+  "out": "results/gpu11",
+  "tag": "",
+  "probe": 0
+ },
+ "params": 148664576,
+ "log": [
+  {
+   "bpb": 1.6366197130209656,
+   "ratio": 3.756290479738637,
+   "word_prec": 0.6264852138960666,
+   "at_space": 0.2173344817685903,
+   "step": 2000,
+   "time": 930.705258846283,
+   "train_bpb": 1.6296606827088191
+  },
+  {
+   "bpb": 1.507380722135203,
+   "ratio": 3.6971680018052577,
+   "word_prec": 0.6198440149203119,
+   "at_space": 0.2556120718887759,
+   "step": 4000,
+   "time": 1631.9168252944946,
+   "train_bpb": 1.5020153828158889
+  }
+ ],
+ "final": {
+  "bpb": 1.507380722135203,
+  "ratio": 3.6971680018052577,
+  "word_prec": 0.6198440149203119,
+  "at_space": 0.2556120718887759,
+  "step": 4000,
+  "time": 1631.9168252944946,
+  "train_bpb": 1.5020153828158889
+ },
+ "sweep": [],
+ "done": false
+}
