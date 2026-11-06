@@ -143,14 +143,17 @@ if traj:
         c, m = STYLE[g]
         xs = [e["step"] for e in r["log"] if "ctx_gain" in e]
         ys = [e["ctx_gain"] for e in r["log"] if "ctx_gain" in e]
-        ax.plot(xs, ys, color=c, lw=1.0, alpha=0.85)
+        z = {"static / non-learned boundaries": 2, "H-Net + anticipatory feature": 3, "H-Net": 4}[g]
+        ax.plot(xs, ys, color=c, lw=1.0, alpha=0.9, zorder=z, ls="-" if g != "H-Net" else (0, (4, 1.5)))
     for g, (c, m) in STYLE.items():
         if any(group(r["arm"]) == g for r in traj):
-            ax.plot([], [], color=c, lw=1.6, label=g)
+            short = {"H-Net": "H-Net", "H-Net + anticipatory feature": "H-Net + antic.",
+                     "static / non-learned boundaries": "fixed / random"}[g]
+            ax.plot([], [], color=c, lw=1.6, label=short, ls="-" if g != "H-Net" else (0, (4, 1.5)))
     ax.set_xlabel("training step")
     ax.set_ylabel("ctx_gain (bpb)")
     ax.set_title("Main-network use during training (official code)", loc="left")
-    ax.legend(frameon=False, loc="upper left")
+    ax.legend(frameon=False, loc="lower right", bbox_to_anchor=(1.0, 0.06))
     fig.savefig(f"{OUT}/fig_traj.pdf")
     plt.close(fig)
 

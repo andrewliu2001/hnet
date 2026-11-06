@@ -1,6 +1,7 @@
 _test*
 *.aux
 *.log
+!main.pdf
 *.bbl
 *.blg
 *.out

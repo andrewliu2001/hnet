@@ -32,17 +32,19 @@ path alone does the language modelling. We measure this with a simple diagnostic
 increase in validation bits-per-byte (\bpb) when the main network's output is replaced by its
 per-sequence mean. In 80 GPU training runs of 100--150M-parameter models on FineWeb-Edu bytes,
 both in our re-implementation and in the official H-Net code, every model with static or
-non-learned chunk boundaries collapsed (\ctx{}$\le 0.02$), while H-Net's learned dynamic
-chunking usually kept the main network in use. In this regime, H-Net's advantage over
-fixed-stride chunking (0.11 \bpb{} in the official code) is explained by \emph{whether the hierarchy
-is used at all}, and \bpb{} correlates strongly with \ctx{} across runs ($r=-0.82$). Collapse is
-also seed-dependent for H-Net itself (3/20 seeds in our re-implementation; one of three official
-seeds was only partially alive and 0.1 \bpb{} worse). Three straightforward anti-collapse
-interventions did not revive static chunking, and none of six new chunking mechanisms we
-designed beat H-Net. A new routing feature that anticipates next-byte difficulty removed collapse in
-20/20 seeds but its improvement over H-Net (1.322 vs.\ 1.333 \bpb) is not statistically
-significant. We recommend reporting \ctx{} (or an equivalent bypass check) and multiple seeds
-for any hierarchical byte-level model.
+non-learned chunk boundaries collapsed (\ctx{}$\le 0.02$), including models with
+\emph{random} boundaries, while H-Net's learned, content-dependent chunking usually kept the main
+network in use. In this regime H-Net's advantage over fixed-stride chunking (0.11 \bpb{} in the
+official code) is explained by \emph{whether the hierarchy is used at all}, and \bpb{} correlates
+strongly with \ctx{} across runs ($r=-0.91$). Collapse is decided within the first 1{,}000 training
+steps and never reverses, and it also happens to H-Net itself (3/20 seeds of our
+re-implementation and 1/9 seeds of the official code, plus one partial collapse costing
+0.1 \bpb). Three straightforward anti-collapse interventions did not revive static chunking, and
+none of six new chunking mechanisms we designed beat H-Net. A routing feature that anticipates
+next-byte difficulty avoided collapse in all 26 of its runs (H-Net: 4/29 collapsed), but this
+difference is not significant ($p=0.11$) and the feature does not improve H-Net when H-Net does not
+collapse. We recommend reporting \ctx{} (or an equivalent bypass check) and multiple seeds for
+any hierarchical byte-level model.
 \end{abstract}
 
 \section{Introduction}
@@ -68,9 +70,13 @@ like a normal, reasonably good byte-level LM.
 \item Evidence from a re-implementation and from the official H-Net code that static chunking
   collapses in every run, while H-Net's learned routing usually prevents collapse; H-Net's
   advantage over fixed-stride chunking tracks main-network use (Section~\ref{sec:results}).
-\item Seed-level statistics (20 seeds per arm) showing that collapse is stochastic even for H-Net.
+\item Two observations about the mechanism: content-independent \emph{random} boundaries collapse
+  exactly like fixed ones, and the outcome is fixed within the first 1{,}000 steps
+  (Section~\ref{sec:mech}).
+\item Seed-level statistics (20 seeds per arm in our re-implementation, 9 official H-Net seeds)
+  showing that collapse is stochastic even for H-Net.
 \item Negative results for six new chunking mechanisms and three anti-collapse interventions,
-  and a null result (with 20 seeds) for an anticipatory routing feature
+  and a null result (26 runs, two implementations) for an anticipatory routing feature
   (Sections~\ref{sec:negative}--\ref{sec:anticip}).
 \end{itemize}
 
@@ -85,8 +91,7 @@ load-balancing loss). The main network's outputs $y_{1:M}$ are \emph{de-chunked}
 exponential moving average whose rate is $p$, broadcast back to bytes, multiplied by a
 straight-through confidence term \citep{bengio2013ste}, added to a residual projection of
 $h$, and decoded. The encoder and decoder use Mamba-2 \citep{dao2024mamba2} layers in the
-official release; the main network is a Transformer. Gradients reach the router only through
-the EMA rate and the straight-through term.
+official release; the main network is a Transformer. Gradients reach the router only through the EMA rate, the straight-through term and the load-balancing loss.
 
 \section{Diagnosing a bypassed hierarchy}
 \label{sec:diag}
@@ -143,10 +148,11 @@ on demand; $\sim$1\,h per run.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_scatter.pdf}
-\caption{Final validation \bpb{} against \ctx{} for every valid run. Static or non-learned
-boundaries (fixed stride, fixed stride with H-Net's EMA de-chunking, anticipatory boundaries
-without a learned router, and anti-collapse variants) all sit at $\ctx{}\approx0$. Dashed line:
-collapse threshold 0.05. Across all runs, $r(\bpb,\ctx{})=-0.82$.}
+\caption{Final validation \bpb{} against \ctx{} for every valid run (58 ours, 22 official). Static or
+non-learned boundaries (fixed stride, random boundaries, fixed stride with H-Net's EMA
+de-chunking, anticipatory boundaries without a learned router, and anti-collapse variants) all sit
+at $\ctx{}\approx0$. Dashed line:
+collapse threshold 0.05. Across all runs, $r(\bpb,\ctx{})=-0.91$.}
 \label{fig:scatter}
 \end{figure}
 
@@ -166,8 +172,10 @@ ours & fixed + H-Net de-chunking & 3 & 1.363 & 1.362--1.364 & 0.001--0.002 & 3/3
 ours & H-Net & 20 & 1.333 & 1.304--1.391 & 0.033--0.261 & 3/20 & 3.64\\
 ours & H-Net + anticipatory & 20 & 1.322 & 1.303--1.394 & 0.080--0.318 & 0/20 & 3.56\\
 \midrule
-official & fixed stride & 3 & 1.390 & 1.381--1.401 & 0.0006--0.0008 & 3/3 & 4.00\\
-official & H-Net & 3 & 1.279 & 1.243--1.350 & 0.108--0.537 & 0/3 & 3.49\\
+official & fixed stride & 4 & 1.389 & 1.381--1.401 & 0.001--0.004 & 4/4 & 4.00\\
+official & random boundaries & 3 & 1.385 & 1.382--1.387 & 0.000--0.005 & 3/3 & 3.99\\
+official & H-Net & 9 & 1.278 & 1.243--1.413 & 0.005--0.559 & 1/9 & 3.46\\
+official & H-Net + anticipatory & 6 & 1.267 & 1.258--1.300 & 0.312--0.490 & 0/6 & 2.94\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -175,21 +183,19 @@ official & H-Net & 3 & 1.279 & 1.243--1.350 & 0.108--0.537 & 0/3 & 3.49\\
 \subsection{Static chunking collapses; H-Net usually does not}
 
 Table~\ref{tab:main} and Figure~\ref{fig:scatter} summarise the main comparison. In our
-re-implementation, every run with static boundaries ended with $\ctx{}\le 0.018$ (17/17 runs
-across seven configurations), at 1.34--1.38 \bpb{}. The 128-byte-window encoder and decoder
-alone form a byte LM of about this quality; the 12-layer main network adds nothing. Matching
+re-implementation, every run with static boundaries ended with $\ctx{}\le 0.018$ (17/17 runs across eight configurations), at 1.34--1.38 \bpb{}. As these collapsed runs show, the 128-byte-window encoder and decoder alone form a byte LM of about this quality; the 12-layer main network adds nothing. Matching
 H-Net's realised compression with a 3.6-byte stride did not change this, nor did giving fixed
 boundaries H-Net's learned EMA de-chunking and straight-through gate (``fixed + H-Net
 de-chunking''), which shows that H-Net's de-chunker is not what keeps the main network alive.
 
 The official implementation behaves the same way: official fixed-stride runs reach
-1.38--1.40 \bpb{} with $\ctx{}<0.001$, whereas official H-Net reaches 1.24--1.35 \bpb{} with
-\ctx{} of 0.11--0.54. When it works, the official model uses its main network far more than our
-re-implementation does ($\ctx{}\approx0.5$ vs.\ 0.1--0.3), and is correspondingly better
-(1.24 vs.\ $\approx$1.31 \bpb).
+1.38--1.40 \bpb{} with $\ctx{}\le0.004$, whereas the seven non-collapsed official H-Net seeds
+reach 1.243--1.263 \bpb{} with \ctx{} of 0.41--0.56. When it works, the official model uses its
+main network far more than our re-implementation does ($\ctx{}\approx0.5$ vs.\ 0.1--0.3), and is
+correspondingly better (1.25 vs.\ $\approx$1.31 \bpb).
 
 \paragraph{H-Net's advantage tracks main-network use.} Across all runs \bpb{} and \ctx{} are
-strongly anti-correlated ($r=-0.82$; within the two H-Net arms of our re-implementation alone
+strongly anti-correlated ($r=-0.91$; within the two H-Net arms of our re-implementation alone
 $r=-0.52$, where a few poor runs are not collapses). In this regime, the gap between H-Net and
 fixed-stride chunking (0.04 \bpb{} ours, 0.11 \bpb{} official) is therefore best described as
 the gap between a hierarchy that is used and one that is bypassed.
@@ -214,21 +220,56 @@ training compression.}
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/fig_seeds.pdf}
-\caption{Per-seed final \bpb{}. H-Net's outcomes are bimodal-ish: most seeds reach
-1.30--1.33 \bpb{}, but several land 0.04--0.06 \bpb{} worse, mostly with a collapsed or partially
-collapsed main network. One of three official H-Net seeds ($\ctx{}=0.11$) is 0.1 \bpb{} worse
-than the other two ($\ctx{}\approx0.5$).}
+\caption{Per-seed final \bpb{}. Ours: most H-Net seeds reach 1.30--1.33 \bpb{}, but several land
+0.04--0.06 \bpb{} worse, mostly with a collapsed or partially collapsed main network. Official H-Net: seven seeds at 1.24--1.26 \bpb{}, one partially collapsed
+(1.350, $\ctx{}=0.11$), one fully collapsed (1.413, $\ctx{}=0.005$). Random and fixed boundaries
+(official code) all collapse.}
 \label{fig:seeds}
 \end{figure}
 
 With 20 seeds of our re-implementation, H-Net's final \bpb{} ranges from 1.304 to 1.391
 (Figure~\ref{fig:seeds}); 3/20 runs collapsed ($\ctx{}\le0.05$) and 7/20 ended above 1.34
-\bpb{}. Official H-Net shows the same behaviour on a smaller sample: seeds 1 and 3 reached
-1.245 and 1.243 \bpb{} ($\ctx{}=0.50$, 0.54), seed 2 only 1.350 ($\ctx{}=0.11$). Single-seed
-comparisons between hierarchical byte LMs can therefore differ by more than the effects being
-compared.
+\bpb{}. Official H-Net shows the same behaviour: of nine seeds, seven reached 1.243--1.263 \bpb{}
+($\ctx{}\ge0.41$), seed 2 reached only 1.350 ($\ctx{}=0.11$), and seed 4 collapsed completely
+(1.413 \bpb{}, $\ctx{}=0.005$), ending \emph{worse} than fixed-stride chunking. Single-seed comparisons
+between hierarchical byte LMs can therefore differ by more than the effects being compared.
 
-%OFFICIAL2_RESULTS%
+\subsection{Mechanism: content-dependent boundaries, decided early}
+\label{sec:mech}
+
+\begin{figure}[t]
+\centering
+\begin{minipage}{0.49\linewidth}
+\includegraphics[width=\linewidth]{figures/fig_traj.pdf}
+\end{minipage}\hfill
+\begin{minipage}{0.49\linewidth}
+\caption{\ctx{} measured every 1{,}000 steps (official code; 16 runs). Every run that ends with a
+used main network already has $\ctx{}\ge0.03$ at step 1{,}000 and increases monotonically. Every
+fixed-stride and random-boundary run, and the collapsing H-Net seed (dashed line at 0), is at
+$\ctx{}\approx0$ from step 1{,}000 onwards and never recovers.}
+\label{fig:traj}
+\end{minipage}
+\end{figure}
+
+\paragraph{Random boundaries collapse too.} To separate ``boundaries that vary'' from ``boundaries
+that depend on content'', we trained the official architecture with boundaries drawn independently
+with probability $1/4$ at every byte (same compression as fixed stride, but irregular chunks). All
+three random-boundary runs collapsed ($\ctx{}\le0.005$, 1.382--1.387 \bpb), indistinguishable
+from fixed stride. Together with the re-implementation result that H-Net's de-chunking alone does
+not help static boundaries, this points at the \emph{content-dependent, learned} placement of
+boundaries as what keeps the main network in use.
+
+\paragraph{Collapse is decided early.} Logging \ctx{} during training (Figure~\ref{fig:traj})
+shows two clean regimes. Runs whose main network is eventually used have $\ctx{}=0.03$--0.13 already
+at step 1{,}000 (the end of learning-rate warm-up) and grow steadily; collapsed runs are at
+$\ctx{}\approx0$ by step 1{,}000 and stay there for the remaining 8{,}000 steps. Interventions
+against collapse therefore have to act at the very start of training. (Our residual warm-up,
+Section~\ref{sec:negative}, acted over the first 3{,}000 steps and did not suffice for static
+boundaries.) A plausible account, which we have not tested directly, is a race at initialisation:
+the encoder--residual--decoder path learns local byte statistics quickly, after which the gradient
+reaching the main network through a decoder that already predicts well is too weak or too noisy for
+it to start carrying information, unless chunk boundaries that align with content make the main
+network's inputs informative early.
 
 \subsection{What did not fix collapse}
 \label{sec:negative}
@@ -274,7 +315,7 @@ about them beyond ``no evidence of an improvement''. In the valid GPU setting no
 mechanisms outperformed H-Net, and every mechanism without a learned, content-dependent router
 collapsed.
 
-\subsection{Anticipatory routing: fewer collapses, no significant gain}
+\subsection{Anticipatory routing: no collapses observed, no significant gain}
 \label{sec:anticip}
 
 Our most promising variant keeps H-Net's router and adds one feature: the standardised
@@ -291,8 +332,16 @@ bytes that the encoder finds hard to predict. Over 20 seeds it never collapsed
 $t$-test $p=0.15$, Mann--Whitney $p=0.15$, seed-paired $t$-test $p=0.20$, Levene $p=0.19$,
 Fisher's exact test on collapse counts $p=0.23$. An interim analysis with 14 vs.\ 16 seeds
 showed a significant variance reduction (Levene $p=0.046$) that did not survive the remaining
-seeds; one anticipatory seed ended at 1.394 \bpb{} \emph{without} collapsing ($\ctx{}=0.22$). We
-report this as a null result with a possible small reliability benefit.
+seeds; one anticipatory seed ended at 1.394 \bpb{} \emph{without} collapsing ($\ctx{}=0.22$).
+
+In the official code (6 seeds), the anticipatory feature again never collapsed
+($\ctx{}\ge0.31$; mean 1.267 vs.\ 1.278 for nine H-Net seeds, Welch $p=0.62$). However, its
+non-collapsed runs (1.258--1.300 \bpb) are slightly \emph{worse} than H-Net's seven non-collapsed
+runs (1.243--1.263), and it settles at a lower compression (2.94 vs.\ 3.46 bytes per chunk), i.e.\
+it spends roughly 18\% more main-network compute. Pooling both implementations, collapse
+($\ctx{}\le0.05$) occurred in 0/26 anticipatory runs vs.\ 4/29 H-Net runs (Fisher $p=0.11$). We
+therefore report a null result: a possible reduction in collapse risk that our sample cannot
+establish, and no improvement when H-Net trains normally.
 
 \section{Related work}
 
@@ -313,9 +362,11 @@ and the shortcut is the encoder-to-decoder residual.
 Our models are small (100--150M parameters) and trained on 590M bytes, far below the scale of
 the H-Net paper; the residual shortcut may matter less when encoder and decoder are relatively
 weaker or training is longer. We use one dataset, one-stage hierarchies, and target compression
-4. Official-code results use 3 seeds per arm (plus the additional runs in
-Section~\ref{sec:mech}); our re-implementation differs from the official code (Transformer
-instead of Mamba-2 encoder/decoder) and is weaker in absolute terms. \ctx{} measures dependence
+4, and a short training budget; collapse might be escaped later in much longer runs, although we
+saw no recovery in 8{,}000 steps after it occurred. Official-code results use 3--9 seeds per arm.
+Our re-implementation differs from the official code (Transformer instead of Mamba-2
+encoder/decoder) and is weaker in absolute terms. We did not tune the load-balancing weight or
+learning rates of the official code for this smaller model. \ctx{} measures dependence
 on the main network's chunk-specific content under mean replacement; it is a diagnostic, not a
 complete account of what the main network computes.
 
@@ -351,7 +402,7 @@ and up-sampling differ. Byte $t$ may only read chunks completed at or before $t$
   detached next-byte probe and $B$ a running budget $\approx N\cdot\mathbb{E}[s]$.
 \item \textbf{Anticipatory boundaries}: boundary at $t$ when the probe's predictive entropy of byte
   $t{+}1$ exceeds a threshold adjusted online to keep the boundary rate at $1/N$.
-\item \textbf{H-Net + realised surprisal / + anticipatory}: H-Net's router logit plus $\gamma$ times
+\item \textbf{H-Net + realised surprisal / + anticipatory}: H-Net's boundary probability plus $\gamma$ times
   a standardised surprisal (of $x_t$) or predictive-entropy (of $x_{t+1}$) feature.
 \item \textbf{Fixed + H-Net de-chunking}: fixed boundaries, but H-Net's learned $p$ drives the EMA
   de-chunking and the straight-through gate.
@@ -368,6 +419,11 @@ replicate on a clean split. The first three GPU waves used full causal attention
 encoder and decoder and a main-network learning rate of $10^{-3}$; a compression sweep showed
 \bpb{} unchanged to four decimals between 2.7 and 6 bytes per chunk, which led us to the
 \ctx{} diagnostic. We exclude those waves from all conclusions.
+
+\section{Compute}
+All runs used rented spot GPUs (NVIDIA H100 80GB PCIe; three official runs on A100 80GB), one or
+two runs per GPU, about one hour per run. Including the CPU study, the excluded early GPU waves
+and failed installation attempts, the project used roughly 230 USD of GPU time.
 
 \section{Use of AI assistance}
 The experiments, analysis code and a first draft of this paper were produced with the help of an

@@ -4,6 +4,15 @@ A pure-PyTorch testbed (no `mamba_ssm`) for comparing dynamic-chunking (DC) mech
 inside a 1-stage H-Net-style byte LM, with several new mechanisms. Part 2 (GPU, 8×H100,
 FineWeb-Edu) supersedes Part 1 (CPU, 6.5 MB of text).
 
+> **Paper:** [`paper/main.pdf`](paper/main.pdf) — *Is the Hierarchy Doing Anything? Main-Network
+> Collapse in Hierarchical Byte-Level Language Models* (80 valid GPU runs; final numbers there
+> supersede the TL;DR below where they differ). Additional official-code results since the TL;DR:
+> random (content-independent) boundaries collapse like fixed ones (3/3, `ctx_gain` ≤ 0.005);
+> official H-Net over 9 seeds: 7 healthy (1.243–1.263 bpb), 1 partial (1.350), 1 fully collapsed
+> (1.413, `ctx_gain` 0.005); collapse is decided by step 1,000 and never reverses; official
+> H-Net + anticipatory: 0/6 collapsed but healthy runs slightly worse (1.258–1.300) at ~18 % more
+> main-network compute — pooled collapse 0/26 vs 4/29, Fisher p = 0.11 (not significant).
+
 > **TL;DR.**
 > 1. **Main-network collapse decides everything here — and it happens in the official H-Net
 >    code too.** In H-Net-style byte LMs the deep main network can collapse to a near-constant
