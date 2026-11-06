@@ -12,17 +12,20 @@ apt-get update -qq && apt-get install -y -qq git python3-pip python3-venv >/dev/
 python3 -m venv /opt/venv && . /opt/venv/bin/activate     # avoid debian-managed site-packages
 PIP="pip install -q"
 $PIP --upgrade pip wheel setuptools
-$PIP torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-$PIP numpy pyarrow einops optree "triton==3.2.0"
 GH=https://github.com
-ABI=$(python3 -c "import torch;print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
-echo "torch $(python3 -c 'import torch;print(torch.__version__)') cxx11abi=$ABI"
-# --no-deps so these wheels cannot replace the pinned torch
-$PIP --no-deps $GH/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
-$PIP --no-deps $GH/state-spaces/mamba/releases/download/v2.2.5/mamba_ssm-2.2.5+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
-$PIP --no-deps $GH/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl
-$PIP transformers==4.46.3 packaging ninja   # mamba_ssm / flash_attn runtime imports
-python3 -c "import torch;print('torch after wheels', torch.__version__)"
+try_combo() {  # torch_spec torch_index triton mamba_ver causal_ver flash_ver tag
+  $PIP "torch==$1" --index-url $2 && $PIP numpy pyarrow einops optree "triton==$3" transformers==4.46.3 packaging || return 1
+  ABI=$(python3 -c "import torch;print('TRUE' if torch._C._GLIBCXX_USE_CXX11_ABI else 'FALSE')")
+  T=$7
+  $PIP --no-deps --force-reinstall \
+    $GH/Dao-AILab/causal-conv1d/releases/download/v$5/causal_conv1d-$5+cu12torch${T}cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl \
+    $GH/state-spaces/mamba/releases/download/v$4/mamba_ssm-$4+cu12torch${T}cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl \
+    $GH/Dao-AILab/flash-attention/releases/download/v$6/flash_attn-$6+cu12torch${T}cxx11abi${ABI}-cp312-cp312-linux_x86_64.whl || return 1
+  python3 -c "import torch, mamba_ssm, flash_attn, causal_conv1d; from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined; from flash_attn.ops.triton.layer_norm import RMSNorm; print('OK', torch.__version__, mamba_ssm.__version__, flash_attn.__version__)"
+}
+try_combo 2.7.1 https://download.pytorch.org/whl/cu126 3.3.1 2.2.5 1.5.2 2.8.0.post2 2.7 \
+ || try_combo 2.6.0 https://download.pytorch.org/whl/cu124 3.2.0 2.2.4 1.5.0.post8 2.7.4.post1 2.6 \
+ || try_combo 2.6.0 https://download.pytorch.org/whl/cu124 3.2.0 2.2.5 1.5.0.post8 2.7.4.post1 2.6
 
 git clone -q -b "$BRANCH" https://github.com/andrewliu2001/hnet.git hnet
 cd hnet/research/dcbench
