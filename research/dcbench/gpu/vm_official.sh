@@ -11,6 +11,7 @@ cd $WORK
 apt-get update -qq && apt-get install -y -qq git python3-pip >/dev/null
 PIP="pip install -q --break-system-packages"
 $PIP torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+$PIP --ignore-installed typing_extensions
 $PIP numpy pyarrow einops optree "triton==3.2.0"
 GH=https://github.com
 $PIP $GH/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
@@ -28,7 +29,9 @@ push() {
   for i in 1 2 3; do curl -sS -m 60 -T /tmp/results.tgz -H "Filename: results.tgz" -H "Title: $1" \
     "https://ntfy.sh/$TOPIC" > /dev/null && break; sleep 10; done
 }
-python3 -c "import torch, mamba_ssm, flash_attn, causal_conv1d; print(torch.__version__, torch.cuda.device_count(), mamba_ssm.__version__, flash_attn.__version__)" > $R/logs/env.txt 2>&1
+if ! python3 -c "import torch, mamba_ssm, flash_attn, causal_conv1d; print(torch.__version__, torch.cuda.device_count(), mamba_ssm.__version__, flash_attn.__version__)" > $R/logs/env.txt 2>&1; then
+  echo "install failed" > $R/STATUS; push "install FAILED"; exit 1
+fi
 nvidia-smi >> $R/logs/env.txt
 echo "setup" > $R/STATUS; push "VM up"
 
