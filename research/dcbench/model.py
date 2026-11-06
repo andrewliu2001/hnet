@@ -27,6 +27,28 @@ def rope(x, base=10000.0):
     return torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], -1).flatten(-2)
 
 
+def local_attention(q, k, v, W):
+    """Exact causal sliding-window attention (each query sees the previous W keys incl. itself)
+    in O(L*W): queries in block n attend to keys in blocks n-1 and n under a (W, 2W) mask."""
+    B, H, L, Dh = q.shape
+    P = (-L) % W
+    if P:
+        q, k, v = (F.pad(t, (0, 0, 0, P)) for t in (q, k, v))
+    n = (L + P) // W
+    qb = q.view(B, H, n, W, Dh)
+    kb, vb = k.view(B, H, n, W, Dh), v.view(B, H, n, W, Dh)
+    prev = lambda t: torch.cat([torch.zeros_like(t[:, :, :1]), t[:, :, :-1]], 2)
+    kk = torch.cat([prev(kb), kb], 3)                    # (B, H, n, 2W, Dh)
+    vv = torch.cat([prev(vb), vb], 3)
+    i = torch.arange(W, device=q.device)[:, None]
+    j = torch.arange(2 * W, device=q.device)[None, :] - W   # key offset relative to block start
+    mask = (j <= i) & (i - j < W)                          # (W, 2W)
+    first = mask.clone(); first[:, :W] = False             # block 0 has no previous block
+    m = torch.stack([first] + [mask] * (n - 1)) if n > 1 else first[None]
+    a = F.scaled_dot_product_attention(qb, kk, vv, attn_mask=m)
+    return a.reshape(B, H, n * W, Dh)[:, :, :L]
+
+
 class Block(nn.Module):
     def __init__(self, d, nh, window=None):
         super().__init__()
@@ -44,9 +66,7 @@ class Block(nn.Module):
         if self.window is None:
             a = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash path on GPU
         else:
-            i = torch.arange(L, device=x.device)
-            am = (i[:, None] >= i[None, :]) & (i[:, None] - i[None, :] < self.window)
-            a = F.scaled_dot_product_attention(q, k, v, attn_mask=am)
+            a = local_attention(q, k, v, self.window)
         x = x + self.out_proj(a.transpose(1, 2).reshape(B, L, D))
         g, u = self.fc1(self.n2(x)).chunk(2, -1)
         return x + self.fc2(F.silu(g) * u)
