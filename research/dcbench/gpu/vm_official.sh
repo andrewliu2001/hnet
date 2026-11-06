@@ -8,10 +8,11 @@ export HOME=/root DEBIAN_FRONTEND=noninteractive
 WORK=/ephemeral; [ -d $WORK ] || WORK=/root
 cd $WORK
 
-apt-get update -qq && apt-get install -y -qq git python3-pip >/dev/null
-PIP="pip install -q --break-system-packages"
+apt-get update -qq && apt-get install -y -qq git python3-pip python3-venv >/dev/null
+python3 -m venv /opt/venv && . /opt/venv/bin/activate     # avoid debian-managed site-packages
+PIP="pip install -q"
+$PIP --upgrade pip wheel setuptools
 $PIP torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-$PIP --ignore-installed typing_extensions
 $PIP numpy pyarrow einops optree "triton==3.2.0"
 GH=https://github.com
 $PIP $GH/Dao-AILab/causal-conv1d/releases/download/v1.5.0.post8/causal_conv1d-1.5.0.post8+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
