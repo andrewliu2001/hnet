@@ -1,0 +1,48 @@
+{
+ "args": {
+  "chunker": "eqinfo",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 9000,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.001,
+  "warmup": 1000,
+  "N": 4,
+  "aux": 0.03,
+  "d_outer": 512,
+  "d_inner": 768,
+  "n_enc": 4,
+  "n_main": 12,
+  "n_dec": 4,
+  "nh": 8,
+  "nh_inner": 12,
+  "seed": 2,
+  "eval_every": 2000,
+  "eval_batches": 100,
+  "out": "results/gpu2",
+  "tag": "",
+  "probe": 0
+ },
+ "params": 148272640,
+ "log": [
+  {
+   "bpb": 1.5670733961822871,
+   "ratio": 3.994256306239319,
+   "word_prec": 0.23817933554638743,
+   "step": 2000,
+   "time": 839.571608543396,
+   "train_bpb": 1.5684420822729954
+  }
+ ],
+ "final": {
+  "bpb": 1.5670733961822871,
+  "ratio": 3.994256306239319,
+  "word_prec": 0.23817933554638743,
+  "step": 2000,
+  "time": 839.571608543396,
+  "train_bpb": 1.5684420822729954
+ },
+ "sweep": [],
+ "done": false
+}
