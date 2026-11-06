@@ -1,11 +1,12 @@
 #!/bin/bash
 # Headless runner for an 8-GPU Hyperstack VM (passed as cloud-init user_data).
-# The launcher prepends:  GH_TOKEN=...  BRANCH=...  BUDGET_S=...
-# Results/logs are pushed back to $BRANCH under research/dcbench/results/gpu/.
+# The launcher prepends:  TOPIC=...  BRANCH=...  BUDGET_S=...
+# No credentials live on the VM: the repo is public, and results/logs are sent as a
+# tarball attachment to an unguessable ntfy.sh topic, polled by the launching session.
 exec > /var/log/dcbench.log 2>&1
 set -x
 export HOME=/root DEBIAN_FRONTEND=noninteractive
-REPO=https://x-access-token:${GH_TOKEN}@github.com/andrewliu2001/hnet.git
+REPO=https://github.com/andrewliu2001/hnet.git
 WORK=/ephemeral; [ -d $WORK ] || WORK=/root
 cd $WORK
 
@@ -14,14 +15,14 @@ pip install -q --break-system-packages torch numpy pyarrow || pip install -q tor
 
 git clone -q -b "$BRANCH" "$REPO" hnet
 cd hnet/research/dcbench
-git config user.name "dcbench-vm"; git config user.email "dcbench-vm@users.noreply.github.com"
 R=results/gpu; mkdir -p $R/logs
 
-push() {  # commit whatever results exist and push (rebasing on concurrent pushes)
+push() {  # send current results + log tails as one ntfy attachment
   cp /var/log/dcbench.log $R/logs/vm.log 2>/dev/null
   for f in $WORK/logs/*.log; do [ -f "$f" ] && tail -n 300 "$f" > $R/logs/$(basename "$f"); done
-  git add -A $R && git commit -qm "dcbench GPU: $1" || true
-  for i in 1 2 3 4 5; do git pull -q --rebase origin "$BRANCH" && git push -q origin HEAD:"$BRANCH" && break; sleep $((i*5)); done
+  tar czf /tmp/results.tgz $R
+  for i in 1 2 3; do curl -sS -m 60 -T /tmp/results.tgz -H "Filename: results.tgz" -H "Title: $1" \
+    "https://ntfy.sh/$TOPIC" > /dev/null && break; sleep 10; done
 }
 nvidia-smi > $R/logs/nvidia-smi.txt; python3 -c "import torch;print(torch.__version__, torch.cuda.device_count())" >> $R/logs/nvidia-smi.txt
 echo "setup" > $R/STATUS; push "VM up"
