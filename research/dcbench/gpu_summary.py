@@ -5,7 +5,7 @@ import glob, json, collections, statistics as st
 
 ALIVE = 0.05
 g = collections.defaultdict(list)
-for f in sorted(glob.glob("results/gpu[4-9]/*.json")):
+for f in sorted(glob.glob("results/gpu[4-9]/*.json") + glob.glob("results/gpu1[0-9]/*.json")):
     d = json.load(open(f))
     if not d.get("done"):
         continue
