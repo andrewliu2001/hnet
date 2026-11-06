@@ -44,8 +44,10 @@ def local_attention(q, k, v, W):
     j = torch.arange(2 * W, device=q.device)[None, :] - W   # key offset relative to block start
     mask = (j <= i) & (i - j < W)                          # (W, 2W)
     first = mask.clone(); first[:, :W] = False             # block 0 has no previous block
-    m = torch.stack([first] + [mask] * (n - 1)) if n > 1 else first[None]
-    a = F.scaled_dot_product_attention(qb, kk, vv, attn_mask=m)
+    m = torch.stack([first] + [mask] * (n - 1)) if n > 1 else first[None]   # (n, W, 2W)
+    # 4-D layout so the fused (memory-efficient) SDPA kernel can be used on GPU
+    a = F.scaled_dot_product_attention(qb.reshape(B, H * n, W, Dh), kk.reshape(B, H * n, 2 * W, Dh),
+                                       vv.reshape(B, H * n, 2 * W, Dh), attn_mask=m.repeat(H, 1, 1))
     return a.reshape(B, H, n * W, Dh)[:, :, :L]
 
 

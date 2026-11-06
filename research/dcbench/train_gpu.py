@@ -21,6 +21,8 @@ p.add_argument("--bs", type=int, default=32)
 p.add_argument("--L", type=int, default=2048)
 p.add_argument("--lr", type=float, default=1e-3)
 p.add_argument("--warmup", type=int, default=1000)
+p.add_argument("--lr_main_mult", type=float, default=0.3, help="lr multiplier for the main network")
+p.add_argument("--window", type=int, default=128, help="sliding window of encoder/decoder attention (0 = full)")
 p.add_argument("--N", type=float, default=4)
 p.add_argument("--aux", type=float, default=0.03)
 p.add_argument("--d_outer", type=int, default=512)
@@ -52,13 +54,15 @@ for c in b" \n\t.,;:!?\"'()-\x00":
 
 model = ByteHNet(args.chunker, d_outer=args.d_outer, d_inner=args.d_inner, n_enc=args.n_enc,
                  n_main=args.n_main, n_dec=args.n_dec, nh=args.nh, nh_inner=args.nh_inner,
-                 N=args.N, window=None).to(dev)
+                 N=args.N, window=args.window or None).to(dev)
 nparams = sum(p.numel() for p in model.parameters())
-decay = [p for n, p in model.named_parameters() if p.dim() >= 2]
-no_decay = [p for n, p in model.named_parameters() if p.dim() < 2]
-opt = torch.optim.AdamW([{"params": decay, "weight_decay": 0.1},
-                         {"params": no_decay, "weight_decay": 0.0}],
-                        lr=args.lr, betas=(0.9, 0.95), fused=dev == "cuda")
+groups = []
+for is_main in (False, True):
+    ps = [(n, p) for n, p in model.named_parameters() if n.startswith("main.") == is_main]
+    mult = args.lr_main_mult if is_main else 1.0
+    groups.append({"params": [p for n, p in ps if p.dim() >= 2], "weight_decay": 0.1, "mult": mult})
+    groups.append({"params": [p for n, p in ps if p.dim() < 2], "weight_decay": 0.0, "mult": mult})
+opt = torch.optim.AdamW(groups, lr=args.lr, betas=(0.9, 0.95), fused=dev == "cuda")
 
 
 def lr_at(s):
@@ -104,7 +108,7 @@ os.makedirs(args.out, exist_ok=True)
 log, t0 = [], time.time()
 for step in range(1, args.steps + 1):
     for g in opt.param_groups:
-        g["lr"] = lr_at(step)
+        g["lr"] = lr_at(step) * g["mult"]
     x, y = batch(train, args.bs, rng)
     with torch.autocast(dev, dtype=torch.bfloat16):
         logits, st = model(x)
@@ -134,6 +138,14 @@ for step in range(1, args.steps + 1):
         print(f"{name} EVAL {ev}", flush=True)
         sweep = []
         if step == args.steps:
+            # hierarchy check: how much does the main network's *context* contribute?
+            ch, up0 = model.chunker, model.chunker.up
+            ch.up = lambda y, st: up0(y.mean(1, keepdim=True).expand_as(y).contiguous(), st)
+            ev["bpb_main_meanreplaced"] = evaluate(val, args.eval_batches // 2)["bpb"]
+            ch.up = up0
+            ev["bpb_half"] = evaluate(val, args.eval_batches // 2)["bpb"]
+            ev["ctx_gain"] = ev["bpb_main_meanreplaced"] - ev["bpb_half"]
+            print(f"{name} CTX {ev['ctx_gain']:.4f} bpb", flush=True)
             # inference-time compute dial: same weights, different compression
             ch = model.chunker
             if hasattr(ch, "thr"):
