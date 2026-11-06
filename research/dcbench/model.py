@@ -41,11 +41,12 @@ class Block(nn.Module):
         B, L, D = x.shape
         q, k, v = self.qkv(self.n1(x)).view(B, L, 3, self.nh, D // self.nh).permute(2, 0, 3, 1, 4)
         q, k = rope(q), rope(k)
-        i = torch.arange(L, device=x.device)
-        am = i[:, None] >= i[None, :]
-        if self.window is not None:
-            am = am & (i[:, None] - i[None, :] < self.window)
-        a = F.scaled_dot_product_attention(q, k, v, attn_mask=am)
+        if self.window is None:
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash path on GPU
+        else:
+            i = torch.arange(L, device=x.device)
+            am = (i[:, None] >= i[None, :]) & (i[:, None] - i[None, :] < self.window)
+            a = F.scaled_dot_product_attention(q, k, v, attn_mask=am)
         x = x + self.out_proj(a.transpose(1, 2).reshape(B, L, D))
         g, u = self.fc1(self.n2(x)).chunk(2, -1)
         return x + self.fc2(F.silu(g) * u)
@@ -67,13 +68,13 @@ class ByteHNet(nn.Module):
     """1-stage H-Net style byte LM with a pluggable chunker."""
 
     def __init__(self, chunker="hnet", d_outer=192, d_inner=320, n_enc=2, n_main=6, n_dec=2,
-                 nh=4, N=4, window=128):
+                 nh=4, N=4, window=128, nh_inner=None):
         super().__init__()
         self.emb = nn.Embedding(256, d_outer)
         self.enc = Stack(d_outer, nh, n_enc, window)
         self.chunker = CHUNKERS[chunker](d_outer, N)
         self.up_dim = nn.Linear(d_outer, d_inner, bias=False)
-        self.main = Stack(d_inner, nh, n_main)
+        self.main = Stack(d_inner, nh_inner or nh, n_main)
         self.down_dim = nn.Linear(d_inner, d_outer, bias=False)
         self.residual_proj = nn.Linear(d_outer, d_outer)
         self.dec = Stack(d_outer, nh, n_dec, window)

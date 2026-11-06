@@ -86,6 +86,7 @@ class HNetChunker(nn.Module):
 
     def down(self, h):
         cos = F.cosine_similarity(self.q(h[:, :-1]), self.k(h[:, 1:]), dim=-1)
+        cos = cos.to(torch.promote_types(cos.dtype, torch.float32))
         p = ((1 - cos) / 2).clamp(0, 1)
         p = F.pad(p, (1, 0), value=1.0)
         b = p >= 0.5
@@ -174,7 +175,7 @@ class IFChunker(nn.Module):
             cos = F.cosine_similarity(self.q(h[:, :-1]), self.k(h[:, 1:]), dim=-1)
             dis = F.pad((1 - cos) / 2, (1, 0), value=0.0)
             logit = logit + self.g * (dis - 0.5)
-        a = torch.sigmoid(logit)
+        a = torch.sigmoid(logit.to(torch.promote_types(logit.dtype, torch.float32)))
         if self.frozen:
             a = torch.full_like(a, 1.0 / self.N)
         a = torch.cat([torch.ones_like(a[:, :1]), a[:, 1:]], 1)  # byte 0 forms chunk 0
