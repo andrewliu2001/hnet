@@ -1,0 +1,72 @@
+{
+ "args": {
+  "chunker": "hnet_anticip",
+  "train": "/ephemeral/data/train.bin",
+  "val": "/ephemeral/data/val.bin",
+  "steps": 9000,
+  "bs": 32,
+  "L": 2048,
+  "lr": 0.001,
+  "warmup": 1000,
+  "lr_main_mult": 0.3,
+  "res_warmup": 0,
+  "main_in_norm": 0,
+  "window": 128,
+  "N": 4,
+  "aux": 0.03,
+  "d_outer": 512,
+  "d_inner": 768,
+  "n_enc": 4,
+  "n_main": 12,
+  "n_dec": 4,
+  "nh": 8,
+  "nh_inner": 12,
+  "seed": 3,
+  "eval_every": 2000,
+  "eval_batches": 100,
+  "out": "results/gpu13",
+  "tag": "",
+  "probe": 0
+ },
+ "params": 148796929,
+ "log": [
+  {
+   "bpb": 1.6578228349082982,
+   "ratio": 3.9178832334971365,
+   "word_prec": 0.7135091102938534,
+   "at_space": 0.2002970878205973,
+   "step": 2000,
+   "time": 1003.1425340175629,
+   "train_bpb": 1.6525650397802216
+  },
+  {
+   "bpb": 1.5279620579466062,
+   "ratio": 4.0270072974759925,
+   "word_prec": 0.714453531928098,
+   "at_space": 0.17553373574385608,
+   "step": 4000,
+   "time": 1783.2417113780975,
+   "train_bpb": 1.5202814193883165
+  },
+  {
+   "bpb": 1.452878666792768,
+   "ratio": 3.813629348931723,
+   "word_prec": 0.6754046597966032,
+   "at_space": 0.19507855332227966,
+   "step": 6000,
+   "time": 2557.7499434947968,
+   "train_bpb": 1.4482757919181362
+  }
+ ],
+ "final": {
+  "bpb": 1.452878666792768,
+  "ratio": 3.813629348931723,
+  "word_prec": 0.6754046597966032,
+  "at_space": 0.19507855332227966,
+  "step": 6000,
+  "time": 2557.7499434947968,
+  "train_bpb": 1.4482757919181362
+ },
+ "sweep": [],
+ "done": false
+}

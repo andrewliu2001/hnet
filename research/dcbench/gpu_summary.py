@@ -29,3 +29,19 @@ for k, v in sorted(g.items()):
     al = [x["bpb"] for _, x in v if x.get("ctx_gain", 0) > ALIVE]
     if al and len(al) < len(v):
         print(f"* `{k}` mean over alive seeds only: {st.mean(al):.3f} ({len(al)}/{len(v)})")
+
+# official H-Net implementation (train_official.py)
+off = collections.defaultdict(list)
+for f in sorted(glob.glob("results/official[a-z]/*.json")):
+    d = json.load(open(f))
+    if d.get("done"):
+        off[d["args"]["variant"]].append((d["args"]["seed"], d["final"]))
+if off:
+    print("\nOfficial implementation (`train_official.py`, Mamba-2 encoder/decoder, ~100M params):\n")
+    print("| arm | seeds | val bpb (per seed) | mean | ctx_gain (per seed) | compression |")
+    print("|---|---|---|---|---|---|")
+    for k, v in sorted(off.items()):
+        v = sorted(v, key=lambda sv: sv[0])
+        print(f"| official `{k}` | {','.join(str(s) for s, _ in v)} | {', '.join(f'{x['bpb']:.3f}' for _, x in v)} | "
+              f"**{st.mean(x['bpb'] for _, x in v):.3f}** | {', '.join(f'{x['ctx_gain']:.4f}' for _, x in v)} | "
+              f"{st.mean(x['ratio'] for _, x in v):.2f} |")
