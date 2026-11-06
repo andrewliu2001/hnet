@@ -39,7 +39,7 @@ belongs to chunk `k` with weight `w_{t,k} = |[C_{t−1}, C_t] ∩ [k, k+1]|`
 
 * **Exact length control.** #chunks = ⌊Σ a_t⌋, so the compression ratio is
   a direct, differentiable function of `mean(a)`. A one-line quadratic penalty
-  keeps it at target (realised ratio 3.96–4.05 for target 4 across all seeds),
+  keeps it at target (`if_last`: realised ratio 3.96–4.05 for target 4 across all seeds),
   whereas H-Net DC's ratio loss lets the realised ratio drift (3.4–3.8 here),
   i.e. it silently spends ~10–17% more main-network compute.
 * **Gradient without STE/EMA.** The pooling weights are piecewise-linear in
@@ -62,7 +62,7 @@ Implementation: ~40 lines, two `scatter_add`s, no custom kernels.
   (end of *War and Peace*), so round-1 numbers are reported separately.
 * Model: emb → encoder (2 Transformer layers, d=192, SWA 128) → chunker →
   main (6 Transformer layers, d=320) → de-chunk → + residual → decoder (2 layers)
-  → head. ≈10M params; identical for all mechanisms up to the router (<0.1M).
+  → head. ≈12.5M params; identical for all mechanisms up to the router (<0.1M).
 * Training: 1500 steps × 16 × 512 bytes (≈12M bytes), AdamW 2e-3, cosine,
   1 CPU thread per run. Target compression N=4. `aux` weight 0.03 (H-Net
   default) for H-Net; IF uses 0.03×10 on its quadratic.
@@ -75,11 +75,36 @@ then `python summarize.py`.
 
 ## Results (interleaved val, step 1500)
 
-RESULTS_TABLE
+| split | chunker | seeds | val bpb (each) | mean val bpb | compression L/M | word-boundary precision |
+|---|---|---|---|---|---|---|
+| interleaved | fixed | 1,2,3,4 | 1.977, 1.965, 1.955, 1.961 | 1.964 | 4.00 | 0.23 |
+| interleaved | fixed_N3.4 | 1,2 | 1.973, 1.968 | 1.970 | 3.39 | 0.24 |
+| interleaved | hnet | 1,2,3 | 1.974, 1.955, 1.960 | 1.963 | 3.61 | 0.37 |
+| interleaved | hnet_noema | 1,2 | 1.993, 1.984 | 1.988 | 3.65 | 0.22 |
+| interleaved | if | 1,2 | 2.016, 2.006 | 2.011 | 4.07 | 0.24 |
+| interleaved | if_cos | 1 | 2.002 | 2.002 | 4.27 | 0.21 |
+| interleaved | if_last | 1,2,3,4 | 1.960, 1.949, 1.961, 1.954 | 1.956 | 4.01 | 0.24 |
+| interleaved | if_last_frozen | 1,2 | 1.985, 1.960 | 1.972 | 4.00 | 0.23 |
+
+Wall-clock (1 CPU thread, 1500 steps, seeds 1–3): `fixed` 4771 s, `if_last` 4954 s,
+`hnet` 5626 s → IF-DC is ~12% faster than H-Net DC (H-Net's realised ratio
+drifts below target, so its main network processes more chunks) and ~4% slower
+than fixed-stride.
 
 Seed-paired comparison (same data order per seed):
 
-PAIRED_TABLE
+| seed | fixed | fixed_N3.4 | hnet | hnet_noema | if | if_last | if_last_frozen |
+|---|---|---|---|---|---|---|---|
+| 1 | 1.977 | 1.973 | 1.974 | 1.993 | 2.016 | 1.960 | 1.985 |
+| 2 | 1.965 | 1.968 | 1.955 | 1.984 | 2.006 | 1.949 | 1.960 |
+| 3 | 1.955 | – | 1.960 | – | – | 1.961 | – |
+| 4 | 1.961 | – | – | – | – | 1.954 | – |
+
+* if_last − fixed over seeds [1, 2, 3, 4]: mean -0.0085, sd 0.0108, t = -1.57
+* if_last − hnet  over seeds [1, 2, 3]: mean -0.0068, sd 0.0074, t = -1.58
+
+(t is a paired t-statistic; |t| ≈ 1.6 with 3–4 seeds is **not** significant,
+p ≈ 0.2.)
 
 Round 1 (shifted val split, seed 0, not comparable in absolute terms):
 `if` 2.770, `hnet_noema` 2.832 (ratio 3.53), `hnet` 2.864, `fixed` 2.891.
@@ -88,8 +113,7 @@ This one-seed "IF beats H-Net by 0.09" did **not** replicate on the clean split
 
 ## Findings
 
-1. **No mechanism reliably beats fixed-stride at this scale.** H-Net DC (mean
-   of 3 seeds) is within noise of fixed-stride, even with ~10% more main-network
+1. **No mechanism reliably beats fixed-stride at this scale.** H-Net DC (1.963, 3 seeds) is within noise of fixed-stride (1.964, 4 seeds), even with ~10% more main-network
    compute (realised ratio ≈3.6 vs 4). A fixed stride of 3.4 (compute-matched to
    H-Net) is no better than stride 4, so the compression difference is not what
    decides it either. H-Net's paper reports that DC's advantage appears with
