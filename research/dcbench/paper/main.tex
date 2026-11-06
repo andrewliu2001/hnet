@@ -30,7 +30,7 @@ path from encoder to decoder. We show that this design has a silent failure mode
 network can \emph{collapse} to an almost input-independent output while the encoder--residual--decoder
 path alone does the language modelling. We measure this with a simple diagnostic, \ctx{}: the
 increase in validation bits-per-byte (\bpb) when the main network's output is replaced by its
-per-sequence mean. In $\sim$70 GPU training runs of 100--150M-parameter models on FineWeb-Edu bytes,
+per-sequence mean. In 80 GPU training runs of 100--150M-parameter models on FineWeb-Edu bytes,
 both in our re-implementation and in the official H-Net code, every model with static or
 non-learned chunk boundaries collapsed (\ctx{}$\le 0.02$), while H-Net's learned dynamic
 chunking usually kept the main network in use. In this regime, H-Net's advantage over
@@ -38,8 +38,8 @@ fixed-stride chunking (0.11 \bpb{} in the official code) is explained by \emph{w
 is used at all}, and \bpb{} correlates strongly with \ctx{} across runs ($r=-0.82$). Collapse is
 also seed-dependent for H-Net itself (3/20 seeds in our re-implementation; one of three official
 seeds was only partially alive and 0.1 \bpb{} worse). Three straightforward anti-collapse
-interventions did not revive static chunking, nor did seven new chunking mechanisms we
-designed. A new routing feature that anticipates next-byte difficulty removed collapse in
+interventions did not revive static chunking, and none of six new chunking mechanisms we
+designed beat H-Net. A new routing feature that anticipates next-byte difficulty removed collapse in
 20/20 seeds but its improvement over H-Net (1.322 vs.\ 1.333 \bpb) is not statistically
 significant. We recommend reporting \ctx{} (or an equivalent bypass check) and multiple seeds
 for any hierarchical byte-level model.
@@ -69,7 +69,7 @@ like a normal, reasonably good byte-level LM.
   collapses in every run, while H-Net's learned routing usually prevents collapse; H-Net's
   advantage over fixed-stride chunking tracks main-network use (Section~\ref{sec:results}).
 \item Seed-level statistics (20 seeds per arm) showing that collapse is stochastic even for H-Net.
-\item Negative results for seven new chunking mechanisms and three anti-collapse interventions,
+\item Negative results for six new chunking mechanisms and three anti-collapse interventions,
   and a null result (with 20 seeds) for an anticipatory routing feature
   (Sections~\ref{sec:negative}--\ref{sec:anticip}).
 \end{itemize}
@@ -267,8 +267,12 @@ chunking \citep{dong2020cif} with exact compression control and three variants;
 equal-information chunking (fire when accumulated next-byte surprisal of a detached probe
 reaches a running budget); anticipatory chunking (end a chunk where the predictive entropy of the
 next byte is high; 66\% of its boundaries fall on spaces or punctuation); H-Net with a realised-surprisal
-feature; and fixed boundaries with H-Net's learned de-chunking. None outperformed H-Net, and all
-mechanisms without a learned, content-dependent router collapsed when we could measure \ctx{}.
+feature; and fixed boundaries with H-Net's learned de-chunking. Integrate-and-fire,
+equal-information and realised-surprisal routing were only evaluated in the CPU study and in GPU
+runs with the bypassed configuration of Appendix~\ref{app:earlier}, so we do not draw conclusions
+about them beyond ``no evidence of an improvement''. In the valid GPU setting none of the
+mechanisms outperformed H-Net, and every mechanism without a learned, content-dependent router
+collapsed.
 
 \subsection{Anticipatory routing: fewer collapses, no significant gain}
 \label{sec:anticip}
